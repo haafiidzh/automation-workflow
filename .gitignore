@@ -49,3 +49,5 @@ next-env.d.ts
 /workflow/sessions.md
 /workflow/briefs/*
 !/workflow/briefs/.gitkeep
+
+.claude/*

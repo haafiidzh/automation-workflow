@@ -1,0 +1,5 @@
+# Notion Accounts
+
+| id | label | env | workspace |
+|---|---|---|---|
+| personal | Personal | NOTION_TOKEN_PERSONAL | My Workspace |

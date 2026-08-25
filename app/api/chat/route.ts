@@ -77,6 +77,7 @@ export async function POST(req: NextRequest) {
           docsFiles: scan.docsFiles,
           message,
           resumeSessionId: sessionId,
+          notionToken: process.env[notionAccount.env],
         })) {
           controller.enqueue(enc.encode(sseLine(evt.type, evt)));
         }

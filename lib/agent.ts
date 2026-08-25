@@ -1,5 +1,7 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 import { readRulesContent } from "./claude-dir";
+import { queryNotionDatabase } from "./notion";
 
 export type AgentEvent =
   | { type: "text_delta"; text: string }
@@ -19,6 +21,7 @@ type RunSessionParams = {
   docsFiles: string[];
   message: string;
   resumeSessionId?: string;
+  notionToken?: string;
 };
 
 function buildSystemPromptAppend(docsFiles: string[], projectPath: string): string {
@@ -47,7 +50,34 @@ setelah brief markdown biasa, dengan struktur persis:
 \`\`\`
 
 \`properties\` harus sudah dalam bentuk value Notion API (mis. \`{"Name": {"title": [{"text": {"content": "..."}}]}}\`),
-bukan pasangan key-value polos. Kalau brief ini bukan untuk Notion, jangan sertakan blok ini sama sekali.`;
+bukan pasangan key-value polos. Kalau brief ini bukan untuk Notion, jangan sertakan blok ini sama sekali.
+
+Kalau ada properti wajib (menurut tasking.md) yang TIDAK bisa kamu isi dengan aman
+dari pesan user atau docs project — JANGAN menebak/mengarang nilainya, dan JANGAN
+kirim \`notion_ticket\`. Sebagai gantinya, akhiri respons dengan blok \`json\` ini:
+
+\`\`\`json
+{
+  "notion_ticket_needs_input": {
+    "fields": [
+      {
+        "property": "<nama properti persis seperti di NOTION_TASK_SCHEMA.md>",
+        "type": "people | select | date | text",
+        "prompt": "pertanyaan singkat buat user",
+        "options": [{ "id": "<id/value Notion API asli>", "label": "<label buat ditampilkan>" }]
+      }
+    ]
+  }
+}
+\`\`\`
+
+\`options\` wajib diisi untuk type \`people\`/\`select\` (ambil dari schema/known-people
+yang sudah kamu baca), kosongkan/hilangkan untuk type \`date\`/\`text\`. Jawaban user
+akan datang sebagai pesan berikutnya (format "<Property>: <value>" per baris) — pas
+itu terjadi, evaluasi ulang: kalau masih ada yang kurang, kirim
+\`notion_ticket_needs_input\` lagi (hanya untuk sisa yang belum terisi), kalau sudah
+lengkap kirim \`notion_ticket\` final seperti kontrak di atas. Jangan pernah kirim
+\`notion_ticket\` dan \`notion_ticket_needs_input\` sekaligus.`;
 
   return `${rules}\n\n---\n\n${docsListing}\n\n---\n\n${notionContract}`;
 }
@@ -63,8 +93,42 @@ export async function* runAgentSession({
   docsFiles,
   message,
   resumeSessionId,
+  notionToken,
 }: RunSessionParams): AsyncGenerator<AgentEvent> {
   const append = buildSystemPromptAppend(docsFiles, projectPath);
+
+  const allowedTools = ["Read", "Glob", "Grep"];
+  const mcpServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
+
+  if (notionToken) {
+    const queryDatabaseTool = tool(
+      "query_database",
+      "Query a Notion database read-only (e.g. to find the last used ticket number before creating a new one). Never use this to write data.",
+      {
+        database_id: z.string().describe("Notion database ID"),
+        filter: z.unknown().optional().describe("Notion API filter object"),
+        sorts: z.unknown().optional().describe("Notion API sorts array"),
+        page_size: z.number().optional().describe("Max rows to return, default 20"),
+      },
+      async (args) => {
+        const { results, hasMore } = await queryNotionDatabase(notionToken, args.database_id, {
+          filter: args.filter,
+          sorts: args.sorts,
+          pageSize: args.page_size,
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify({ results, hasMore }) }],
+        };
+      }
+    );
+
+    mcpServers.notion = createSdkMcpServer({
+      name: "notion",
+      version: "1.0.0",
+      tools: [queryDatabaseTool],
+    });
+    allowedTools.push("mcp__notion__query_database");
+  }
 
   const q = query({
     prompt: message,
@@ -73,8 +137,9 @@ export async function* runAgentSession({
       agent: agentName,
       settingSources: ["project"],
       systemPrompt: { type: "preset", preset: "claude_code", append },
-      allowedTools: ["Read", "Glob", "Grep"],
-      maxTurns: 12,
+      allowedTools,
+      mcpServers,
+      maxTurns: 50,
       includePartialMessages: true,
       ...(resumeSessionId ? { resume: resumeSessionId } : {}),
     },

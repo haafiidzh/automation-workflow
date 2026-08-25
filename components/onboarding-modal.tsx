@@ -63,6 +63,13 @@ export function OnboardingModal() {
                 <code className="bg-muted px-1 rounded">{o.guideStep2[3]}</code>
                 {o.guideStep2[4]}
               </li>
+              <li>
+                {o.guideStepRequiredTitle}
+                <pre className="mt-1.5 max-w-full bg-muted rounded-md p-2.5 text-xs overflow-x-auto">
+                  {o.guideStepRequiredCode}
+                </pre>
+                <p className="mt-1.5 text-muted-foreground">{o.guideStepRequiredNote}</p>
+              </li>
               <li>{o.guideStep3[0]}</li>
               <li>
                 {o.guideStep4Title}

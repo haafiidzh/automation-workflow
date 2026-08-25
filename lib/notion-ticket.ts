@@ -48,6 +48,70 @@ export function stripNotionTicketBlock(text: string): string {
   return text.replace(/```json\s*[\s\S]*?```\s*$/, "").trimEnd();
 }
 
+export type NeedsInputField = {
+  property: string;
+  type: "people" | "select" | "date" | "text";
+  prompt: string;
+  options?: { id: string; label: string }[];
+};
+
+export type NotionNeedsInput = { fields: NeedsInputField[] };
+
+/**
+ * Extracts the last ```json ... ``` fenced block and parses it as a
+ * { notion_ticket_needs_input: NotionNeedsInput } payload — the agent emits
+ * this instead of notion_ticket when a required property can't be safely
+ * filled in. Malformed field entries are dropped rather than nulling the
+ * whole result; returns null only if nothing usable remains.
+ */
+export function parseNeedsInput(text: string): NotionNeedsInput | null {
+  const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/g)];
+  if (matches.length === 0) return null;
+
+  const raw = matches[matches.length - 1][1];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("notion_ticket_needs_input" in parsed)
+  ) {
+    return null;
+  }
+
+  const payload = (parsed as { notion_ticket_needs_input: unknown }).notion_ticket_needs_input;
+  if (typeof payload !== "object" || payload === null || !Array.isArray((payload as { fields: unknown }).fields)) {
+    return null;
+  }
+
+  const validTypes = new Set(["people", "select", "date", "text"]);
+  const fields = ((payload as { fields: unknown[] }).fields)
+    .filter((f): f is NeedsInputField => {
+      if (typeof f !== "object" || f === null) return false;
+      const o = f as Record<string, unknown>;
+      if (typeof o.property !== "string" || typeof o.prompt !== "string") return false;
+      if (typeof o.type !== "string" || !validTypes.has(o.type)) return false;
+      if (o.options !== undefined) {
+        if (!Array.isArray(o.options)) return false;
+        return o.options.every(
+          (opt) =>
+            opt && typeof opt === "object" &&
+            typeof (opt as Record<string, unknown>).id === "string" &&
+            typeof (opt as Record<string, unknown>).label === "string"
+        );
+      }
+      return true;
+    });
+
+  if (fields.length === 0) return null;
+  return { fields };
+}
+
 function richTextToString(value: unknown): string {
   if (!Array.isArray(value)) return "";
   return value

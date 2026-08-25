@@ -15,11 +15,14 @@ import {
 import { Markdown } from "@/components/markdown";
 import { OnboardingModal } from "@/components/onboarding-modal";
 import { NotionTicketPreviewModal } from "@/components/notion-ticket-preview";
+import { MissingFieldsPrompt } from "@/components/missing-fields-prompt";
 import {
   parseNotionTicket,
+  parseNeedsInput,
   stripNotionTicketBlock,
   splitStreamingText,
   type NotionTicket,
+  type NotionNeedsInput,
 } from "@/lib/notion-ticket";
 import { useLocale } from "@/lib/i18n/context";
 import type { ConfigResponse, ProjectScanResponse } from "@/lib/types";
@@ -42,6 +45,8 @@ type ChatMessage = {
   toolCalls?: ToolCall[];
   notionTicket?: NotionTicket;
   notionStatus?: NotionCreateStatus;
+  needsInput?: NotionNeedsInput;
+  needsInputResolved?: boolean;
 };
 
 function describeToolCall(t: ToolCall): string {
@@ -142,10 +147,10 @@ export default function Home() {
     setInput("");
   };
 
-  const sendMessage = async () => {
-    if (!input.trim() || !readyToChat || sending) return;
-    const userText = input.trim();
-    setInput("");
+  const sendMessage = async (overrideText?: string) => {
+    const userText = (overrideText ?? input).trim();
+    if (!userText || !readyToChat || sending) return;
+    if (overrideText === undefined) setInput("");
     setChatError(null);
     setMessages((m) => [...m, { role: "user", text: userText }]);
     setMessages((m) => [...m, { role: "assistant", text: "", toolCalls: [] }]);
@@ -221,6 +226,20 @@ export default function Home() {
                 };
                 return next;
               });
+            } else {
+              const needsInput = parseNeedsInput(payload.finalText ?? "");
+              if (needsInput) {
+                setMessages((m) => {
+                  const next = [...m];
+                  const last = next[next.length - 1];
+                  next[next.length - 1] = {
+                    ...last,
+                    text: stripNotionTicketBlock(last.text),
+                    needsInput,
+                  };
+                  return next;
+                });
+              }
             }
           } else if (payload.type === "error") {
             setChatError(payload.message);
@@ -232,6 +251,15 @@ export default function Home() {
     } finally {
       setSending(false);
     }
+  };
+
+  const submitFieldAnswers = (index: number, answerText: string) => {
+    setMessages((m) => {
+      const next = [...m];
+      next[index] = { ...next[index], needsInputResolved: true };
+      return next;
+    });
+    sendMessage(answerText);
   };
 
   const setMessageNotionStatus = (index: number, status: NotionCreateStatus) => {
@@ -328,6 +356,12 @@ export default function Home() {
                 )}
                 {m.notionTicket && (
                   <NotionTicketCard message={m} onCreate={() => createNotionTicket(i)} t={t} />
+                )}
+                {m.needsInput && !m.needsInputResolved && (
+                  <MissingFieldsPrompt
+                    fields={m.needsInput.fields}
+                    onComplete={(text) => submitFieldAnswers(i, text)}
+                  />
                 )}
               </div>
             </div>
@@ -438,7 +472,7 @@ export default function Home() {
             <Button
               size="icon"
               className="rounded-full mb-1"
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={!readyToChat || sending || !input.trim()}
               title={t.composer.send}
             >

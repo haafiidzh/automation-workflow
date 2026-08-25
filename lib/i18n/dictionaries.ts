@@ -47,6 +47,10 @@ type Dictionary = {
     previewTitle: string;
     previewEmpty: string;
   };
+  missingFields: {
+    confirm: string;
+    pickDate: string;
+  };
   onboarding: {
     triggerTitle: string;
     dialogTitle: string;
@@ -58,6 +62,9 @@ type Dictionary = {
     guideStep1Rest: string;
     guideStep1Code: string;
     guideStep2: string[];
+    guideStepRequiredTitle: string;
+    guideStepRequiredCode: string;
+    guideStepRequiredNote: string;
     guideStep3: string[];
     guideStep4Title: string;
     guideStep4Rest: string;
@@ -114,6 +121,10 @@ const id: Dictionary = {
     previewTitle: "Preview ticket Notion",
     previewEmpty: "Empty",
   },
+  missingFields: {
+    confirm: "Konfirmasi",
+    pickDate: "Pilih tanggal",
+  },
   onboarding: {
     triggerTitle: "Cara daftarkan project baru",
     dialogTitle: "Daftarkan project baru",
@@ -134,6 +145,17 @@ const id: Dictionary = {
       "database_id",
       " — tidak disimpan di registry app.",
     ],
+    guideStepRequiredTitle:
+      "Supaya app bisa nanya lewat tombol/pilihan (bukan minta agent nebak) kalau ada properti yang belum diisi, tambah section ini di NOTION_TASK_SCHEMA.md:",
+    guideStepRequiredCode: `## Required fields (task creation)
+
+| Property     | Rule                                          |
+|---           |---                                            |
+| \`Programmer\` | assignee — ask if not given                  |
+| \`Due Date\`   | only if user gives one explicit — no invent  |
+| \`Reviewer\`   | always Hafid Kusuma (\`person-id\`)            |`,
+    guideStepRequiredNote:
+      "Baris yang butuh input user (bukan yang auto/default/hardcode) bikin agent munculin picker interaktif di chat: pilihan people/select jadi tombol, date jadi date-picker, sisanya jadi input teks. Baris yang sudah pasti/default (kayak Reviewer di atas) tidak akan ditanyakan.",
     guideStep3: [
       'Paling gampang: pakai tab "Prompt AI setup" — copy, tempel ke Claude Code (atau agent lain) yang jalan di folder project barumu. Dia akan wawancara singkat lalu generate semua file di atas.',
     ],
@@ -171,6 +193,7 @@ Ketentuan tiap file:
 3. .claude/docs/*.md
    - File referensi apa saja yang persona butuh baca (desain arsitektur, ringkasan modul, dsb).
    - Kalau ada NOTION_TASK_SCHEMA.md: wajib cantumkan Database ID, workspace, dan tabel lengkap semua Properties Notion (nama, type, opsi/select values) — agent baca ini buat nyusun "properties" sesuai bentuk asli Notion API (mis. {"Name": {"title": [...]}}).
+   - Tambahkan juga section "## Required fields (task creation)" — tabel \`Property | Rule\` berisi properti yang WAJIB diisi tiap task dibuat. Untuk baris yang nilainya harus ditanya ke user (bukan auto/default/hardcode), tulis rule-nya jelas (mis. "assignee — ask if not given", "only if user gives one explicit — no invent"). Ini yang bikin app munculin picker interaktif (tombol pilihan / date-picker) di chat kalau propertinya belum keisi — lihat contoh lengkap di ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md.
 
 Tugas kamu sekarang:
 1. Baca struktur repo ini (README, docs yang ada) buat ngerti domain project-nya.
@@ -225,6 +248,10 @@ const en: Dictionary = {
     previewTitle: "Notion ticket preview",
     previewEmpty: "Empty",
   },
+  missingFields: {
+    confirm: "Confirm",
+    pickDate: "Pick a date",
+  },
   onboarding: {
     triggerTitle: "How to register a new project",
     dialogTitle: "Register a new project",
@@ -245,6 +272,17 @@ const en: Dictionary = {
       "database_id",
       " — it isn't stored in the app's registry.",
     ],
+    guideStepRequiredTitle:
+      "So the app can ask via buttons/pickers (instead of making the agent guess) when a property is missing, add this section to NOTION_TASK_SCHEMA.md:",
+    guideStepRequiredCode: `## Required fields (task creation)
+
+| Property     | Rule                                          |
+|---           |---                                            |
+| \`Programmer\` | assignee — ask if not given                  |
+| \`Due Date\`   | only if user gives one explicit — no invent  |
+| \`Reviewer\`   | always Hafid Kusuma (\`person-id\`)            |`,
+    guideStepRequiredNote:
+      "A row that needs user input (not auto/default/hardcoded) makes the agent show an interactive picker in chat: people/select options become buttons, date becomes a date-picker, anything else becomes a text input. A row that's already fixed/default (like Reviewer above) never gets asked.",
     guideStep3: [
       'Easiest: use the "AI setup prompt" tab — copy it, paste into Claude Code (or another agent) running in your new project\'s folder. It will interview you briefly then generate all files above.',
     ],
@@ -282,6 +320,7 @@ Requirements per file:
 3. .claude/docs/*.md
    - Any reference files the persona needs (architecture design, module summaries, etc.).
    - If there's a NOTION_TASK_SCHEMA.md: it must include the Database ID, workspace, and a full table of all Notion Properties (name, type, options/select values) — the agent reads this to build "properties" in real Notion API shape (e.g. {"Name": {"title": [...]}}).
+   - Also add a "## Required fields (task creation)" section — a \`Property | Rule\` table listing properties that MUST be set on every new task. For rows whose value must be asked from the user (not auto/default/hardcoded), spell the rule out clearly (e.g. "assignee — ask if not given", "only if user gives one explicit — no invent"). This is what makes the app show an interactive picker (buttons / date-picker) in chat when that property is still missing — see the full example at ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md.
 
 Your task now:
 1. Read this repo's structure (README, existing docs) to understand the project's domain.

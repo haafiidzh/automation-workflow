@@ -17,6 +17,7 @@ import {
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
 import {
+  extractLeadingHeading,
   extractNotionTitle,
   formatNotionProperties,
   type NotionPropertyDisplay,
@@ -86,22 +87,28 @@ export function NotionTicketPreviewModal({
   title: string;
   emptyLabel: string;
 }) {
-  const pageTitle = extractNotionTitle(ticket.properties) || title;
-  const properties = formatNotionProperties(ticket.properties);
+  const ticketName = extractNotionTitle(ticket.properties);
+  const leading = extractLeadingHeading(ticket.content_markdown);
+  const pageTitle = leading?.heading || ticketName || title;
+  const bodyMarkdown = leading ? leading.rest : ticket.content_markdown;
+  const properties = formatNotionProperties(ticket.properties, ticket.people_names);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogTitle className="sr-only">{title}</DialogTitle>
+        {leading && ticketName && ticketName !== pageTitle && (
+          <span className="text-xs font-medium text-muted-foreground">{ticketName}</span>
+        )}
         <h1 className="text-2xl font-bold leading-tight break-words">{pageTitle}</h1>
         <div className="flex flex-col divide-y divide-border/60">
           {properties.map((p) => (
             <PropertyRow key={p.name} prop={p} emptyLabel={emptyLabel} />
           ))}
         </div>
-        {ticket.content_markdown && (
+        {bodyMarkdown && (
           <div className="border-t pt-3">
-            <Markdown text={ticket.content_markdown} />
+            <Markdown text={bodyMarkdown} />
           </div>
         )}
       </DialogContent>

@@ -73,6 +73,8 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLElement>(null);
+  const stickToBottomRef = useRef(true);
 
   const sessionStarted = messages.length > 0 || sending;
 
@@ -123,8 +125,17 @@ export default function Home() {
   }, [selectedProjectId]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (stickToBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
   }, [messages]);
+
+  const handleMessagesScroll = () => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < 80;
+  };
 
   const handleProjectChange = (projectId: string) => {
     setSelectedProjectId(projectId);
@@ -152,6 +163,7 @@ export default function Home() {
     if (!userText || !readyToChat || sending) return;
     if (overrideText === undefined) setInput("");
     setChatError(null);
+    stickToBottomRef.current = true;
     setMessages((m) => [...m, { role: "user", text: userText }]);
     setMessages((m) => [...m, { role: "assistant", text: "", toolCalls: [] }]);
     setSending(true);
@@ -309,7 +321,11 @@ export default function Home() {
       </div>
 
       {/* Messages */}
-      <main className="flex-1 overflow-y-auto">
+      <main
+        ref={messagesContainerRef}
+        onScroll={handleMessagesScroll}
+        className="flex-1 overflow-y-auto"
+      >
         <div className="max-w-3xl mx-auto px-4 py-6 flex flex-col gap-6 min-h-full">
           {messages.length === 0 && (
             <div className="m-auto text-center">

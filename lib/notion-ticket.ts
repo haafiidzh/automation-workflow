@@ -2,6 +2,7 @@ export type NotionTicket = {
   database_id: string;
   properties: Record<string, unknown>;
   content_markdown: string;
+  people_names?: Record<string, string>;
 };
 
 /**
@@ -41,7 +42,17 @@ export function parseNotionTicket(text: string): NotionTicket | null {
     return null;
   }
 
-  return ticket as NotionTicket;
+  const t = ticket as NotionTicket;
+  const rawNames = t.people_names;
+  if (
+    !rawNames ||
+    typeof rawNames !== "object" ||
+    !Object.entries(rawNames).every(([k, v]) => typeof k === "string" && typeof v === "string")
+  ) {
+    delete t.people_names;
+  }
+
+  return t;
 }
 
 export function stripNotionTicketBlock(text: string): string {
@@ -127,6 +138,19 @@ function richTextToString(value: unknown): string {
     .join("");
 }
 
+/**
+ * Pulls a leading `# Heading` line off markdown body content, if present —
+ * agents often repeat the full descriptive title as the first H1 of
+ * content_markdown (the `Name` title property itself is often a short code
+ * like "B-BUG-20" per project naming rules). Returns null when there's no
+ * leading H1, so callers can fall back to the raw title property.
+ */
+export function extractLeadingHeading(markdown: string): { heading: string; rest: string } | null {
+  const match = markdown.match(/^\s*#\s+(.+?)\s*\n+([\s\S]*)$/);
+  if (!match) return null;
+  return { heading: match[1], rest: match[2] };
+}
+
 /** Finds the page title from a Notion "title"-type property value. */
 export function extractNotionTitle(properties: Record<string, unknown>): string {
   for (const value of Object.values(properties)) {
@@ -151,7 +175,10 @@ export type NotionPropertyDisplay = {
  * POST /v1/pages) into a flat list ready for display — one entry per
  * property, title excluded since it's rendered separately as the page title.
  */
-export function formatNotionProperties(properties: Record<string, unknown>): NotionPropertyDisplay[] {
+export function formatNotionProperties(
+  properties: Record<string, unknown>,
+  peopleNames?: Record<string, string>
+): NotionPropertyDisplay[] {
   return Object.entries(properties)
     .filter(([, v]) => !(v && typeof v === "object" && "title" in (v as object)))
     .map(([name, v]) => {
@@ -188,7 +215,7 @@ export function formatNotionProperties(properties: Record<string, unknown>): Not
             if (x && typeof x === "object") {
               const p = x as Record<string, unknown>;
               if (typeof p.name === "string") return p.name;
-              if (typeof p.id === "string") return p.id;
+              if (typeof p.id === "string") return peopleNames?.[p.id] ?? p.id;
             }
             return "";
           })

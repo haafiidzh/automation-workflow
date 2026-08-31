@@ -44,13 +44,20 @@ setelah brief markdown biasa, dengan struktur persis:
   "notion_ticket": {
     "database_id": "<database ID dari NOTION_TASK_SCHEMA.md>",
     "properties": { "...": "object property Notion API asli, sesuai schema" },
-    "content_markdown": "isi body ticket dalam markdown"
+    "content_markdown": "isi body ticket dalam markdown",
+    "people_names": { "<person-id yang dipakai di properties>": "<nama orangnya>" }
   }
 }
 \`\`\`
 
 \`properties\` harus sudah dalam bentuk value Notion API (mis. \`{"Name": {"title": [{"text": {"content": "..."}}]}}\`),
 bukan pasangan key-value polos. Kalau brief ini bukan untuk Notion, jangan sertakan blok ini sama sekali.
+
+\`people_names\` wajib diisi untuk SETIAP person-id yang muncul di \`properties\`
+(properti type \`people\`) — ambil namanya dari NOTION_TASK_SCHEMA.md atau docs
+known-people yang sudah kamu baca. Ini cuma buat ditampilkan di UI (bukan
+dikirim ke Notion API), jadi user lihat nama, bukan id mentah. Kalau tidak ada
+properti people sama sekali, boleh dihilangkan.
 
 Kalau ada properti wajib (menurut tasking.md) yang TIDAK bisa kamu isi dengan aman
 dari pesan user atau docs project — JANGAN menebak/mengarang nilainya, dan JANGAN

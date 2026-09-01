@@ -47,6 +47,7 @@ next-env.d.ts
 /workflow/projects.md
 /workflow/notion-accounts.md
 /workflow/sessions.md
+/workflow/sessions/*.json
 /workflow/briefs/*
 !/workflow/briefs/.gitkeep
 

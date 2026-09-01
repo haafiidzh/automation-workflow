@@ -34,3 +34,28 @@ export type ProjectScanResponse = {
   agents: AgentInfo[];
   docsFiles: string[];
 };
+
+export type SessionToolCall = { name: string; input: Record<string, unknown> };
+
+export type SessionTurn = {
+  role: "user" | "assistant";
+  text: string;
+  toolCalls?: SessionToolCall[];
+  timestamp: string;
+};
+
+export type SessionRecord = {
+  sessionId: string;
+  projectId: string;
+  agentName: string;
+  notionAccountId: string;
+  createdAt: string;
+  updatedAt: string;
+  numTurns: number;
+  status: "ok" | "error";
+  turns: SessionTurn[];
+};
+
+export type SessionSummary = Omit<SessionRecord, "turns"> & {
+  preview: string;
+};

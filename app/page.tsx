@@ -16,6 +16,7 @@ import { Markdown } from "@/components/markdown";
 import { OnboardingModal } from "@/components/onboarding-modal";
 import { NotionTicketPreviewModal } from "@/components/notion-ticket-preview";
 import { MissingFieldsPrompt } from "@/components/missing-fields-prompt";
+import { SessionSidebar } from "@/components/session-sidebar";
 import {
   parseNotionTicket,
   parseNeedsInput,
@@ -25,7 +26,7 @@ import {
   type NotionNeedsInput,
 } from "@/lib/notion-ticket";
 import { useLocale } from "@/lib/i18n/context";
-import type { ConfigResponse, ProjectScanResponse } from "@/lib/types";
+import type { ConfigResponse, ProjectScanResponse, SessionRecord } from "@/lib/types";
 
 function lastAgentKey(projectId: string) {
   return `orchestrator:lastAgent:${projectId}`;
@@ -72,6 +73,7 @@ export default function Home() {
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLElement>(null);
   const stickToBottomRef = useRef(true);
@@ -158,6 +160,29 @@ export default function Home() {
     setInput("");
   };
 
+  const handleSelectSession = async (id: string) => {
+    try {
+      const res = await fetch(`/api/sessions/${id}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? t.sidebar.loadError);
+      const record = data as SessionRecord;
+      setMessages(
+        record.turns.map((turn) => ({
+          role: turn.role,
+          text: turn.text,
+          toolCalls: turn.toolCalls,
+        }))
+      );
+      setSessionId(record.sessionId);
+      setSelectedAgent(record.agentName);
+      setSelectedNotion(record.notionAccountId);
+      setChatError(null);
+      setInput("");
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const sendMessage = async (overrideText?: string) => {
     const userText = (overrideText ?? input).trim();
     if (!userText || !readyToChat || sending) return;
@@ -222,6 +247,7 @@ export default function Home() {
             });
           } else if (payload.type === "result") {
             setSessionId(payload.sessionId);
+            setSessionsRefreshKey((k) => k + 1);
             if (payload.isError) {
               setChatError(t.errors.sessionError);
             }
@@ -304,7 +330,14 @@ export default function Home() {
   };
 
   return (
-    <div className="h-screen flex flex-col bg-background text-foreground">
+    <div className="h-screen flex flex-row bg-background text-foreground">
+      <SessionSidebar
+        projectId={selectedProjectId}
+        activeSessionId={sessionId}
+        refreshKey={sessionsRefreshKey}
+        onSelect={handleSelectSession}
+      />
+      <div className="flex-1 flex flex-col min-w-0">
       {/* Top bar */}
       <div className="flex items-center justify-between px-4 py-3 shrink-0">
         <span className="text-sm font-medium text-muted-foreground">{t.topBar.brand}</span>
@@ -496,6 +529,7 @@ export default function Home() {
             </Button>
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

@@ -3,6 +3,8 @@ import { NextRequest } from "next/server";
 import { getProjectById, getNotionAccounts, isWithinAllowedRoot } from "@/lib/registry";
 import { scanProject } from "@/lib/claude-dir";
 import { runAgentSession } from "@/lib/agent";
+import { appendSessionTurn } from "@/lib/sessions";
+import type { SessionToolCall } from "@/lib/types";
 
 type ChatRequestBody = {
   projectId: string;
@@ -70,6 +72,9 @@ export async function POST(req: NextRequest) {
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
+      const turnStartedAt = new Date().toISOString();
+      let assistantText = "";
+      const toolCalls: SessionToolCall[] = [];
       try {
         for await (const evt of runAgentSession({
           projectPath: project.path,
@@ -79,6 +84,31 @@ export async function POST(req: NextRequest) {
           resumeSessionId: sessionId,
           notionToken: process.env[notionAccount.env],
         })) {
+          if (evt.type === "text_delta") {
+            assistantText += evt.text;
+          } else if (evt.type === "tool_call") {
+            toolCalls.push({ name: evt.name, input: evt.input });
+          } else if (evt.type === "result") {
+            try {
+              appendSessionTurn({
+                sessionId: evt.sessionId,
+                projectId,
+                agentName,
+                notionAccountId,
+                userTurn: { role: "user", text: message, timestamp: turnStartedAt },
+                assistantTurn: {
+                  role: "assistant",
+                  text: evt.finalText || assistantText,
+                  toolCalls: toolCalls.length ? toolCalls : undefined,
+                  timestamp: new Date().toISOString(),
+                },
+                numTurns: evt.numTurns,
+                isError: evt.isError,
+              });
+            } catch (saveErr) {
+              console.error("Failed to save session:", saveErr);
+            }
+          }
           controller.enqueue(enc.encode(sseLine(evt.type, evt)));
         }
       } catch (err) {

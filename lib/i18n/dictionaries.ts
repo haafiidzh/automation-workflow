@@ -51,6 +51,13 @@ type Dictionary = {
     confirm: string;
     pickDate: string;
   };
+  sidebar: {
+    collapse: string;
+    expand: string;
+    empty: string;
+    selectProject: string;
+    loadError: string;
+  };
   onboarding: {
     triggerTitle: string;
     dialogTitle: string;
@@ -127,6 +134,13 @@ const id: Dictionary = {
   missingFields: {
     confirm: "Konfirmasi",
     pickDate: "Pilih tanggal",
+  },
+  sidebar: {
+    collapse: "Sembunyikan riwayat sesi",
+    expand: "Tampilkan riwayat sesi",
+    empty: "Belum ada sesi tersimpan",
+    selectProject: "Pilih project dulu",
+    loadError: "Gagal memuat daftar sesi",
   },
   onboarding: {
     triggerTitle: "Cara daftarkan project baru",
@@ -269,6 +283,13 @@ const en: Dictionary = {
   missingFields: {
     confirm: "Confirm",
     pickDate: "Pick a date",
+  },
+  sidebar: {
+    collapse: "Hide session history",
+    expand: "Show session history",
+    empty: "No saved sessions yet",
+    selectProject: "Pick a project first",
+    loadError: "Failed to load session list",
   },
   onboarding: {
     triggerTitle: "How to register a new project",

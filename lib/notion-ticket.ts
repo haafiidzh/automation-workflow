@@ -5,33 +5,7 @@ export type NotionTicket = {
   people_names?: Record<string, string>;
 };
 
-/**
- * Extracts the last ```json ... ``` fenced block from agent output and
- * parses it as a { notion_ticket: NotionTicket } payload. Returns null if
- * no block is present or it doesn't match the expected shape — the agent
- * only emits this block when the brief targets Notion.
- */
-export function parseNotionTicket(text: string): NotionTicket | null {
-  const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/g)];
-  if (matches.length === 0) return null;
-
-  const raw = matches[matches.length - 1][1];
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
-
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("notion_ticket" in parsed)
-  ) {
-    return null;
-  }
-
-  const ticket = (parsed as { notion_ticket: unknown }).notion_ticket;
+function coerceNotionTicket(ticket: unknown): NotionTicket | null {
   if (
     typeof ticket !== "object" ||
     ticket === null ||
@@ -55,11 +29,46 @@ export function parseNotionTicket(text: string): NotionTicket | null {
   return t;
 }
 
+/**
+ * Extracts the last ```json ... ``` fenced block from agent output and
+ * parses it as a { notion_tickets: NotionTicket[] } payload. Returns null if
+ * no block is present, the array is empty, or no entry matches the expected
+ * shape — the agent only emits this block when the brief targets Notion.
+ */
+export function parseNotionTickets(text: string): NotionTicket[] | null {
+  const matches = [...text.matchAll(/```json\s*([\s\S]*?)```/g)];
+  if (matches.length === 0) return null;
+
+  const raw = matches[matches.length - 1][1];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+
+  if (
+    typeof parsed !== "object" ||
+    parsed === null ||
+    !("notion_tickets" in parsed) ||
+    !Array.isArray((parsed as { notion_tickets: unknown }).notion_tickets)
+  ) {
+    return null;
+  }
+
+  const tickets = ((parsed as { notion_tickets: unknown[] }).notion_tickets)
+    .map(coerceNotionTicket)
+    .filter((t): t is NotionTicket => t !== null);
+
+  return tickets.length > 0 ? tickets : null;
+}
+
 export function stripNotionTicketBlock(text: string): string {
   return text.replace(/```json\s*[\s\S]*?```\s*$/, "").trimEnd();
 }
 
 export type NeedsInputField = {
+  ticket?: string;
   property: string;
   type: "people" | "select" | "date" | "text";
   prompt: string;
@@ -107,6 +116,7 @@ export function parseNeedsInput(text: string): NotionNeedsInput | null {
       const o = f as Record<string, unknown>;
       if (typeof o.property !== "string" || typeof o.prompt !== "string") return false;
       if (typeof o.type !== "string" || !validTypes.has(o.type)) return false;
+      if (o.ticket !== undefined && typeof o.ticket !== "string") return false;
       if (o.options !== undefined) {
         if (!Array.isArray(o.options)) return false;
         return o.options.every(

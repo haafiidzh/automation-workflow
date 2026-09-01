@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { ArrowUp, Moon, RefreshCw, SquarePen, Sun } from "lucide-react";
+import { ArrowUp, ChevronLeft, ChevronRight, Moon, RefreshCw, SquarePen, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -18,7 +18,7 @@ import { NotionTicketPreviewModal } from "@/components/notion-ticket-preview";
 import { MissingFieldsPrompt } from "@/components/missing-fields-prompt";
 import { SessionSidebar } from "@/components/session-sidebar";
 import {
-  parseNotionTicket,
+  parseNotionTickets,
   parseNeedsInput,
   stripNotionTicketBlock,
   splitStreamingText,
@@ -44,8 +44,9 @@ type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   toolCalls?: ToolCall[];
-  notionTicket?: NotionTicket;
-  notionStatus?: NotionCreateStatus;
+  notionTickets?: NotionTicket[];
+  notionStatuses?: NotionCreateStatus[];
+  activeTicketIndex?: number;
   needsInput?: NotionNeedsInput;
   needsInputResolved?: boolean;
 };
@@ -251,16 +252,17 @@ export default function Home() {
             if (payload.isError) {
               setChatError(t.errors.sessionError);
             }
-            const ticket = parseNotionTicket(payload.finalText ?? "");
-            if (ticket) {
+            const tickets = parseNotionTickets(payload.finalText ?? "");
+            if (tickets) {
               setMessages((m) => {
                 const next = [...m];
                 const last = next[next.length - 1];
                 next[next.length - 1] = {
                   ...last,
                   text: stripNotionTicketBlock(last.text),
-                  notionTicket: ticket,
-                  notionStatus: { state: "idle" },
+                  notionTickets: tickets,
+                  notionStatuses: tickets.map(() => ({ state: "idle" as const })),
+                  activeTicketIndex: 0,
                 };
                 return next;
               });
@@ -300,18 +302,29 @@ export default function Home() {
     sendMessage(answerText);
   };
 
-  const setMessageNotionStatus = (index: number, status: NotionCreateStatus) => {
+  const setMessageNotionStatus = (index: number, ticketIndex: number, status: NotionCreateStatus) => {
     setMessages((m) => {
       const next = [...m];
-      next[index] = { ...next[index], notionStatus: status };
+      const last = next[index];
+      const statuses = [...(last.notionStatuses ?? [])];
+      statuses[ticketIndex] = status;
+      next[index] = { ...last, notionStatuses: statuses };
       return next;
     });
   };
 
-  const createNotionTicket = async (index: number) => {
-    const ticket = messages[index]?.notionTicket;
+  const setActiveTicketIndex = (index: number, ticketIndex: number) => {
+    setMessages((m) => {
+      const next = [...m];
+      next[index] = { ...next[index], activeTicketIndex: ticketIndex };
+      return next;
+    });
+  };
+
+  const createNotionTicket = async (index: number, ticketIndex: number) => {
+    const ticket = messages[index]?.notionTickets?.[ticketIndex];
     if (!ticket) return;
-    setMessageNotionStatus(index, { state: "creating" });
+    setMessageNotionStatus(index, ticketIndex, { state: "creating" });
     try {
       const res = await fetch("/api/notion/create-ticket", {
         method: "POST",
@@ -320,9 +333,9 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t.errors.notionCreate);
-      setMessageNotionStatus(index, { state: "done", url: data.url });
+      setMessageNotionStatus(index, ticketIndex, { state: "done", url: data.url });
     } catch (err) {
-      setMessageNotionStatus(index, {
+      setMessageNotionStatus(index, ticketIndex, {
         state: "error",
         message: err instanceof Error ? err.message : String(err),
       });
@@ -394,7 +407,7 @@ export default function Home() {
                         ) : sending && i === messages.length - 1 && !generatingTicket ? (
                           <TypingDots />
                         ) : null}
-                        {generatingTicket && !m.notionTicket && (
+                        {generatingTicket && !m.notionTickets && (
                           <GeneratingNotionTicket label={t.notionTicket.generating} />
                         )}
                       </>
@@ -403,8 +416,13 @@ export default function Home() {
                 ) : (
                   m.text
                 )}
-                {m.notionTicket && (
-                  <NotionTicketCard message={m} onCreate={() => createNotionTicket(i)} t={t} />
+                {m.notionTickets && (
+                  <NotionTicketCard
+                    message={m}
+                    onCreate={(ticketIndex) => createNotionTicket(i, ticketIndex)}
+                    onNavigate={(ticketIndex) => setActiveTicketIndex(i, ticketIndex)}
+                    t={t}
+                  />
                 )}
                 {m.needsInput && !m.needsInputResolved && (
                   <MissingFieldsPrompt
@@ -538,17 +556,51 @@ export default function Home() {
 function NotionTicketCard({
   message,
   onCreate,
+  onNavigate,
   t,
 }: {
   message: ChatMessage;
-  onCreate: () => void;
+  onCreate: (ticketIndex: number) => void;
+  onNavigate: (ticketIndex: number) => void;
   t: ReturnType<typeof useLocale>["t"];
 }) {
-  const status = message.notionStatus ?? { state: "idle" as const };
+  const tickets = message.notionTickets ?? [];
+  const activeIndex = message.activeTicketIndex ?? 0;
+  const status = message.notionStatuses?.[activeIndex] ?? { state: "idle" as const };
   const [previewOpen, setPreviewOpen] = useState(false);
+  const hasMultiple = tickets.length > 1;
+
   return (
     <div className="mt-3 rounded-xl border bg-muted/40 px-3 py-2.5 flex items-center justify-between gap-3">
-      <span className="text-sm text-muted-foreground">{t.notionTicket.ready}</span>
+      <div className="flex items-center gap-2">
+        {hasMultiple && (
+          <>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t.notionTicket.prevTicket}
+              disabled={activeIndex === 0}
+              onClick={() => onNavigate(activeIndex - 1)}
+            >
+              <ChevronLeft />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              title={t.notionTicket.nextTicket}
+              disabled={activeIndex === tickets.length - 1}
+              onClick={() => onNavigate(activeIndex + 1)}
+            >
+              <ChevronRight />
+            </Button>
+          </>
+        )}
+        <span className="text-sm text-muted-foreground">
+          {hasMultiple
+            ? `${t.notionTicket.counter(activeIndex + 1, tickets.length)} — ${t.notionTicket.readyCount(tickets.length)}`
+            : t.notionTicket.ready}
+        </span>
+      </div>
       <div className="flex items-center gap-2">
         {status.state !== "done" && (
           <Button size="sm" variant="outline" onClick={() => setPreviewOpen(true)}>
@@ -556,7 +608,7 @@ function NotionTicketCard({
           </Button>
         )}
         {status.state === "idle" && (
-          <Button size="sm" onClick={onCreate}>
+          <Button size="sm" onClick={() => onCreate(activeIndex)}>
             {t.notionTicket.create}
           </Button>
         )}
@@ -578,19 +630,23 @@ function NotionTicketCard({
         {status.state === "error" && (
           <div className="flex items-center gap-2">
             <span className="text-xs text-destructive">{status.message}</span>
-            <Button size="sm" variant="outline" onClick={onCreate}>
+            <Button size="sm" variant="outline" onClick={() => onCreate(activeIndex)}>
               {t.notionTicket.retry}
             </Button>
           </div>
         )}
       </div>
-      {message.notionTicket && (
+      {tickets.length > 0 && (
         <NotionTicketPreviewModal
-          ticket={message.notionTicket}
+          tickets={tickets}
+          initialIndex={activeIndex}
           open={previewOpen}
           onOpenChange={setPreviewOpen}
           title={t.notionTicket.previewTitle}
           emptyLabel={t.notionTicket.previewEmpty}
+          counterLabel={t.notionTicket.counter}
+          prevLabel={t.notionTicket.prevTicket}
+          nextLabel={t.notionTicket.nextTicket}
         />
       )}
     </div>

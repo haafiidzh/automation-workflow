@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { NeedsInputField } from "@/lib/notion-ticket";
 import { useLocale } from "@/lib/i18n/context";
 
-type Answer = { property: string; label: string };
+type Answer = { ticket?: string; property: string; label: string };
 
 export function MissingFieldsPrompt({
   fields,
@@ -31,13 +31,15 @@ export function MissingFieldsPrompt({
   const done = step >= fields.length;
 
   const commit = (label: string) => {
-    const next = [...answers, { property: current.property, label }];
+    const next = [...answers, { ticket: current.ticket, property: current.property, label }];
     setAnswers(next);
     setTextDraft("");
     setDate(undefined);
     setTime("");
     if (next.length === fields.length) {
-      onComplete(next.map((a) => `${a.property}: ${a.label}`).join("\n"));
+      onComplete(
+        next.map((a) => `${a.ticket ? `${a.ticket} / ` : ""}${a.property}: ${a.label}`).join("\n")
+      );
     }
   };
 
@@ -46,12 +48,19 @@ export function MissingFieldsPrompt({
       {answers.map((a, i) => (
         <div key={i} className="flex items-center gap-1.5 text-sm text-muted-foreground">
           <Check className="size-3.5 text-primary" />
-          <span className="font-medium text-foreground">{a.property}:</span> {a.label}
+          <span className="font-medium text-foreground">
+            {a.ticket ? `${a.ticket} / ` : ""}
+            {a.property}:
+          </span>{" "}
+          {a.label}
         </div>
       ))}
 
       {!done && current && (
         <div className="flex flex-col gap-2">
+          {current.ticket && (
+            <span className="text-xs font-medium text-muted-foreground">{current.ticket}</span>
+          )}
           <p className="text-sm">{current.prompt}</p>
 
           {(current.type === "people" || current.type === "select") && (

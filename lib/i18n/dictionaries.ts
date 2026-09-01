@@ -38,6 +38,7 @@ type Dictionary = {
   };
   notionTicket: {
     ready: string;
+    readyCount: (count: number) => string;
     create: string;
     creating: string;
     generating: string;
@@ -46,6 +47,9 @@ type Dictionary = {
     preview: string;
     previewTitle: string;
     previewEmpty: string;
+    counter: (current: number, total: number) => string;
+    prevTicket: string;
+    nextTicket: string;
   };
   missingFields: {
     confirm: string;
@@ -122,6 +126,7 @@ const id: Dictionary = {
   },
   notionTicket: {
     ready: "Ticket Notion siap dibuat",
+    readyCount: (count) => `${count} ticket Notion siap dibuat`,
     create: "Buat di Notion",
     creating: "Membuat…",
     generating: "Membuat ticket notion ...",
@@ -130,6 +135,9 @@ const id: Dictionary = {
     preview: "Preview",
     previewTitle: "Preview ticket Notion",
     previewEmpty: "Empty",
+    counter: (current, total) => `Ticket ${current} dari ${total}`,
+    prevTicket: "Ticket sebelumnya",
+    nextTicket: "Ticket selanjutnya",
   },
   missingFields: {
     confirm: "Konfirmasi",
@@ -271,6 +279,7 @@ const en: Dictionary = {
   },
   notionTicket: {
     ready: "Notion ticket ready to create",
+    readyCount: (count) => `${count} Notion tickets ready to create`,
     create: "Create in Notion",
     creating: "Creating…",
     generating: "Creating Notion ticket…",
@@ -279,6 +288,9 @@ const en: Dictionary = {
     preview: "Preview",
     previewTitle: "Notion ticket preview",
     previewEmpty: "Empty",
+    counter: (current, total) => `Ticket ${current} of ${total}`,
+    prevTicket: "Previous ticket",
+    nextTicket: "Next ticket",
   },
   missingFields: {
     confirm: "Confirm",

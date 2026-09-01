@@ -41,33 +41,45 @@ setelah brief markdown biasa, dengan struktur persis:
 
 \`\`\`json
 {
-  "notion_ticket": {
-    "database_id": "<database ID dari NOTION_TASK_SCHEMA.md>",
-    "properties": { "...": "object property Notion API asli, sesuai schema" },
-    "content_markdown": "isi body ticket dalam markdown",
-    "people_names": { "<person-id yang dipakai di properties>": "<nama orangnya>" }
-  }
+  "notion_tickets": [
+    {
+      "database_id": "<database ID dari NOTION_TASK_SCHEMA.md>",
+      "properties": { "...": "object property Notion API asli, sesuai schema" },
+      "content_markdown": "isi body ticket dalam markdown",
+      "people_names": { "<person-id yang dipakai di properties>": "<nama orangnya>" }
+    }
+  ]
 }
 \`\`\`
 
-\`properties\` harus sudah dalam bentuk value Notion API (mis. \`{"Name": {"title": [{"text": {"content": "..."}}]}}\`),
+\`notion_tickets\` array — satu entry per ticket. Kalau pesan user minta beberapa
+task sekaligus (mis. task backend + task mobile terpisah), buat satu entry per
+task dalam array yang sama, JANGAN kirim beberapa blok \`json\` terpisah dan
+JANGAN gabungkan beberapa task jadi satu entry. Urutan entry bebas ikut urutan
+disebut di pesan user.
+
+\`properties\` tiap entry harus sudah dalam bentuk value Notion API (mis. \`{"Name": {"title": [{"text": {"content": "..."}}]}}\`),
 bukan pasangan key-value polos. Kalau brief ini bukan untuk Notion, jangan sertakan blok ini sama sekali.
 
-\`people_names\` wajib diisi untuk SETIAP person-id yang muncul di \`properties\`
-(properti type \`people\`) — ambil namanya dari NOTION_TASK_SCHEMA.md atau docs
-known-people yang sudah kamu baca. Ini cuma buat ditampilkan di UI (bukan
-dikirim ke Notion API), jadi user lihat nama, bukan id mentah. Kalau tidak ada
-properti people sama sekali, boleh dihilangkan.
+\`people_names\` tiap entry wajib diisi untuk SETIAP person-id yang muncul di
+\`properties\` entry itu (properti type \`people\`) — ambil namanya dari
+NOTION_TASK_SCHEMA.md atau docs known-people yang sudah kamu baca. Ini cuma buat
+ditampilkan di UI (bukan dikirim ke Notion API), jadi user lihat nama, bukan id
+mentah. Kalau tidak ada properti people sama sekali di entry itu, boleh
+dihilangkan.
 
 Kalau ada properti wajib (menurut tasking.md) yang TIDAK bisa kamu isi dengan aman
-dari pesan user atau docs project — JANGAN menebak/mengarang nilainya, dan JANGAN
-kirim \`notion_ticket\`. Sebagai gantinya, akhiri respons dengan blok \`json\` ini:
+dari pesan user atau docs project — untuk SALAH SATU ticket pun — JANGAN
+menebak/mengarang nilainya, dan JANGAN kirim \`notion_tickets\` sama sekali untuk
+semua ticket dalam batch ini. Sebagai gantinya, akhiri respons dengan blok
+\`json\` ini yang mencakup field yang kurang dari SEMUA ticket yang diminta:
 
 \`\`\`json
 {
   "notion_ticket_needs_input": {
     "fields": [
       {
+        "ticket": "<label singkat buat bedain ticket ini dari ticket lain di batch yang sama, mis. 'Backend - Arfan'; kosongkan/hilangkan kalau cuma 1 ticket>",
         "property": "<nama properti persis seperti di NOTION_TASK_SCHEMA.md>",
         "type": "people | select | date | text",
         "prompt": "pertanyaan singkat buat user",
@@ -80,11 +92,13 @@ kirim \`notion_ticket\`. Sebagai gantinya, akhiri respons dengan blok \`json\` i
 
 \`options\` wajib diisi untuk type \`people\`/\`select\` (ambil dari schema/known-people
 yang sudah kamu baca), kosongkan/hilangkan untuk type \`date\`/\`text\`. Jawaban user
-akan datang sebagai pesan berikutnya (format "<Property>: <value>" per baris) — pas
+akan datang sebagai pesan berikutnya (format "<Property>: <value>" per baris, atau
+"<Ticket> / <Property>: <value>" kalau field-nya kamu tandai per ticket) — pas
 itu terjadi, evaluasi ulang: kalau masih ada yang kurang, kirim
 \`notion_ticket_needs_input\` lagi (hanya untuk sisa yang belum terisi), kalau sudah
-lengkap kirim \`notion_ticket\` final seperti kontrak di atas. Jangan pernah kirim
-\`notion_ticket\` dan \`notion_ticket_needs_input\` sekaligus.`;
+lengkap kirim \`notion_tickets\` final (array lengkap semua ticket di batch ini)
+seperti kontrak di atas. Jangan pernah kirim \`notion_tickets\` dan
+\`notion_ticket_needs_input\` sekaligus.`;
 
   return `${rules}\n\n---\n\n${docsListing}\n\n---\n\n${notionContract}`;
 }

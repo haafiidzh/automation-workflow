@@ -2,7 +2,7 @@ import { markdownToBlocks } from "@tryfabric/martian";
 import type { NotionTicket } from "./notion-ticket";
 
 export type { NotionTicket } from "./notion-ticket";
-export { parseNotionTicket, stripNotionTicketBlock } from "./notion-ticket";
+export { parseNotionTickets, stripNotionTicketBlock } from "./notion-ticket";
 
 const NOTION_API_VERSION = "2022-06-28";
 

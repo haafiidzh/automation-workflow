@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
+import { useLocale } from "@/lib/i18n/context";
 import {
   extractLeadingHeading,
   extractNotionTitle,
@@ -43,7 +44,40 @@ const PROPERTY_ICON: Record<string, typeof Circle> = {
   unknown: Circle,
 };
 
-function PropertyRow({ prop, emptyLabel }: { prop: NotionPropertyDisplay; emptyLabel: string }) {
+/** Formats a Notion date-property value (raw ISO, optionally a "start → end" range) into a locale-aware long date. */
+function formatDueDate(value: string, locale: string): string {
+  const intlLocale = locale === "id" ? "id-ID" : "en-US";
+  const formatPart = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    const datePart = new Intl.DateTimeFormat(intlLocale, {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(d);
+    if (!iso.includes("T")) return datePart;
+    const timePart = new Intl.DateTimeFormat(intlLocale, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+    return `${datePart} - ${timePart}`;
+  };
+  return value
+    .split(" → ")
+    .map(formatPart)
+    .join(" → ");
+}
+
+function PropertyRow({
+  prop,
+  emptyLabel,
+  locale,
+}: {
+  prop: NotionPropertyDisplay;
+  emptyLabel: string;
+  locale: string;
+}) {
   const Icon = PROPERTY_ICON[prop.type] ?? Circle;
   return (
     <div className="flex items-start gap-3 py-1.5 text-sm">
@@ -70,6 +104,8 @@ function PropertyRow({ prop, emptyLabel }: { prop: NotionPropertyDisplay; emptyL
               </span>
             ))}
           </div>
+        ) : prop.type === "date" ? (
+          <span className="break-words">{formatDueDate(prop.value, locale)}</span>
         ) : (
           <span className="break-words">{prop.value}</span>
         )}
@@ -82,10 +118,12 @@ function TicketBody({
   ticket,
   title,
   emptyLabel,
+  locale,
 }: {
   ticket: NotionTicket;
   title: string;
   emptyLabel: string;
+  locale: string;
 }) {
   const ticketName = extractNotionTitle(ticket.properties);
   const leading = extractLeadingHeading(ticket.content_markdown);
@@ -101,7 +139,7 @@ function TicketBody({
       <h1 className="text-2xl font-bold leading-tight break-words">{pageTitle}</h1>
       <div className="flex flex-col divide-y divide-border/60">
         {properties.map((p) => (
-          <PropertyRow key={p.name} prop={p} emptyLabel={emptyLabel} />
+          <PropertyRow key={p.name} prop={p} emptyLabel={emptyLabel} locale={locale} />
         ))}
       </div>
       {bodyMarkdown && (
@@ -134,6 +172,7 @@ export function NotionTicketPreviewModal({
   prevLabel: string;
   nextLabel: string;
 }) {
+  const { locale } = useLocale();
   const [index, setIndex] = useState(initialIndex);
   const [lastInitialIndex, setLastInitialIndex] = useState(initialIndex);
   if (open && initialIndex !== lastInitialIndex) {
@@ -173,7 +212,7 @@ export function NotionTicketPreviewModal({
             </Button>
           </div>
         )}
-        {ticket && <TicketBody ticket={ticket} title={title} emptyLabel={emptyLabel} />}
+        {ticket && <TicketBody ticket={ticket} title={title} emptyLabel={emptyLabel} locale={locale} />}
       </DialogContent>
     </Dialog>
   );

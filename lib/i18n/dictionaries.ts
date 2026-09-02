@@ -81,6 +81,9 @@ type Dictionary = {
     guideStepRequiredTitle: string;
     guideStepRequiredCode: string;
     guideStepRequiredNote: string;
+    guideStepPeopleTitle: string;
+    guideStepPeopleCode: string;
+    guideStepPeopleNote: string;
     guideStepSettingsTitle: string;
     guideStepSettingsCode: string;
     guideStepSettingsNote: string;
@@ -191,6 +194,28 @@ const id: Dictionary = {
 | \`Reviewer\`   | always Hafid Kusuma (\`person-id\`)            |`,
     guideStepRequiredNote:
       "Baris yang butuh input user (bukan yang auto/default/hardcode) bikin agent munculin picker interaktif di chat: pilihan people/select jadi tombol, date jadi date-picker, sisanya jadi input teks. Baris yang sudah pasti/default (kayak Reviewer di atas) tidak akan ditanyakan.",
+    guideStepPeopleTitle:
+      "Kalau ada properti type people (Programmer/Reviewer dsb), isi tabel \"Known people\" di NOTION_TASK_SCHEMA.md — JANGAN pakai GET /v1/users, itu cuma balikin identity yang sudah connect ke integration (biasanya cuma workspace owner + bot-nya sendiri), bukan semua member workspace:",
+    guideStepPeopleCode: `# 1) query database, page_size 100, paginate pakai has_more + next_cursor
+curl -s -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
+  -H "Authorization: Bearer $NOTION_API_KEY" \\
+  -H "Notion-Version: 2022-06-28" \\
+  -H "Content-Type: application/json" \\
+  -d '{"page_size": 100}'
+
+# 2) try/catch tiap page:
+#    - request gagal (403/404) -> database belum di-"Connect to" ke integration
+#      di Notion UI, sambungkan dulu, baru ulangi
+#    - request sukses tapi results kosong & has_more:false -> project baru,
+#      belum ada task lama; minta user assign 1 task dummy manual lewat
+#      Notion UI dulu, baru ulangi query ini
+# 3) kumpulkan id unik dari tiap page:
+#    properties.Programmer.people[] + properties.Reviewer.people[]
+#    - name terisi -> tulis ke tabel Known people
+#    - name null/kosong -> tandai *(unresolved)*: guest/removed member,
+#      di luar jangkauan baca integration, resolve manual di Notion UI`,
+    guideStepPeopleNote:
+      "Jangan pernah nebak/hardcode person-id. Hasil akhir ditulis ke NOTION_TASK_SCHEMA.md persis format tabel Name | Person ID | Email — contoh lengkap di ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md bagian \"Known people\".",
     guideStepSettingsTitle:
       "Kalau agent project ini dijalankan langsung lewat Claude Code (bukan lewat app orchestrator ini) dan query Notion pakai Bash + curl + $NOTION_API_KEY sendiri (bukan tool query_database bawaan app), tambah .claude/settings.json biar tidak muncul permission prompt tiap query. Scope izinnya sesempit mungkin — curl ke database ID spesifik, bukan curl secara umum:",
     guideStepSettingsCode: `{
@@ -245,11 +270,21 @@ Ketentuan tiap file:
    - Tambah permissions.allow discope sesempit mungkin ke curl database ID itu saja, contoh: {"permissions":{"allow":["Bash(curl -s https://api.notion.com/v1/databases/<database_id>*)"]}}
    - Commit file ini (bukan settings.local.json) biar izinnya kepakai buat semua orang, bukan cuma kamu.
 
+5. Tabel "Known people" (Programmer/Reviewer) di NOTION_TASK_SCHEMA.md — cuma kalau ada property type people
+   - JANGAN pakai GET /v1/users buat resolve nama ke person-id. Integration token cuma bisa lihat identity yang sudah connect ke integration itu (biasanya cuma workspace owner + bot-nya sendiri), bukan semua member workspace.
+   - Cara yang benar: POST https://api.notion.com/v1/databases/<database_id>/query dengan {"page_size": 100}, paginate pakai has_more + start_cursor/next_cursor sampai habis. Dari tiap page, kumpulkan id unik di properties.Programmer.people[] dan properties.Reviewer.people[].
+   - Try/catch tiap request:
+     - gagal (403/404) -> database belum di-"Connect to" ke integration lewat titik-tiga halaman database di Notion UI. Kasih tau user, minta connect, baru ulangi.
+     - sukses tapi results kosong & has_more:false -> project baru, belum ada task lama buat difetch. Minta user assign 1 task dummy manual lewat Notion UI dulu (siapa aja), baru ulangi query ini.
+   - Tiap person id: kalau field "name" di response terisi, tulis ke tabel Known people. Kalau null/kosong, tandai *(unresolved)* — artinya guest/removed member, di luar jangkauan baca integration, gak bisa diisi otomatis, harus resolve manual di Notion UI.
+   - Jangan pernah nebak/hardcode person-id. Tulis hasil akhir persis format tabel Name | Person ID | Email — contoh lengkap di ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md bagian "Known people".
+
 Tugas kamu sekarang:
 1. Baca struktur repo ini (README, docs yang ada) buat ngerti domain project-nya.
 2. Tanya aku hal yang belum jelas: nama & tujuan agent yang mau dibuat, apakah butuh integrasi Notion (kalau ya minta database ID + property list, atau bantu aku fetch via API), aturan tasking spesifik apa yang harus dipatuhi.
 3. Generate semua file di atas dengan isi yang sudah disesuaikan ke project ini, bukan template kosong.
-4. Kasih tau aku baris yang harus ditambahkan ke workflow/projects.md di repo orchestrator: "| <id> | <label> | <path absolut project ini> |".`,
+4. Kalau ada NOTION_TASK_SCHEMA.md dengan property type people: langsung jalankan prosedur poin 5 di atas buat bootstrap tabel Known people-nya, jangan cuma nulis section kosong.
+5. Kasih tau aku baris yang harus ditambahkan ke workflow/projects.md di repo orchestrator: "| <id> | <label> | <path absolut project ini> |".`,
   },
 } as const;
 
@@ -349,6 +384,28 @@ const en: Dictionary = {
 | \`Reviewer\`   | always Hafid Kusuma (\`person-id\`)            |`,
     guideStepRequiredNote:
       "A row that needs user input (not auto/default/hardcoded) makes the agent show an interactive picker in chat: people/select options become buttons, date becomes a date-picker, anything else becomes a text input. A row that's already fixed/default (like Reviewer above) never gets asked.",
+    guideStepPeopleTitle:
+      "If there's a people-type property (Programmer/Reviewer, etc), fill in the \"Known people\" table in NOTION_TASK_SCHEMA.md — do NOT use GET /v1/users, it only returns identities already connected to the integration (usually just the workspace owner + its own bot), not the whole workspace membership:",
+    guideStepPeopleCode: `# 1) query the database, page_size 100, paginate via has_more + next_cursor
+curl -s -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
+  -H "Authorization: Bearer $NOTION_API_KEY" \\
+  -H "Notion-Version: 2022-06-28" \\
+  -H "Content-Type: application/json" \\
+  -d '{"page_size": 100}'
+
+# 2) try/catch each page:
+#    - request fails (403/404) -> database isn't "Connected to" the
+#      integration yet in the Notion UI; connect it, then retry
+#    - request succeeds but results empty & has_more:false -> brand-new
+#      project, no prior tasks; ask the user to manually assign one dummy
+#      task via the Notion UI first, then retry this query
+# 3) collect distinct ids across every page:
+#    properties.Programmer.people[] + properties.Reviewer.people[]
+#    - name present -> write to the Known people table
+#    - name null/empty -> mark *(unresolved)*: guest/removed member,
+#      outside the integration's read scope, resolve manually in Notion UI`,
+    guideStepPeopleNote:
+      "Never guess or hardcode a person-id. Write the final result into NOTION_TASK_SCHEMA.md in the exact Name | Person ID | Email table format — full example at ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md, \"Known people\" section.",
     guideStepSettingsTitle:
       "If this project's agent runs directly via Claude Code (not through this orchestrator app) and queries Notion using Bash + curl + $NOTION_API_KEY itself (instead of the app's built-in query_database tool), add .claude/settings.json so query calls don't hit a permission prompt every time. Scope the rule as narrowly as possible — curl to that specific database ID, not curl in general:",
     guideStepSettingsCode: `{
@@ -403,11 +460,21 @@ Requirements per file:
    - Add a permissions.allow rule scoped as narrowly as possible to curl against that one database ID, e.g.: {"permissions":{"allow":["Bash(curl -s https://api.notion.com/v1/databases/<database_id>*)"]}}
    - Commit this file (not settings.local.json) so the permission applies for everyone, not just you.
 
+5. "Known people" table (Programmer/Reviewer) in NOTION_TASK_SCHEMA.md — only if there's a people-type property
+   - Do NOT use GET /v1/users to resolve names to person-ids. The integration token can only see identities already connected to that integration (usually just the workspace owner + its own bot), not the whole workspace membership.
+   - Correct approach: POST https://api.notion.com/v1/databases/<database_id>/query with {"page_size": 100}, paginate via has_more + start_cursor/next_cursor until exhausted. From each page, collect distinct ids in properties.Programmer.people[] and properties.Reviewer.people[].
+   - Try/catch each request:
+     - fails (403/404) -> the database hasn't been "Connected to" the integration via the database page's ••• menu in the Notion UI. Tell the user, ask them to connect it, then retry.
+     - succeeds but results is empty & has_more:false -> brand-new project, no prior tasks to fetch from. Ask the user to manually assign one dummy task via the Notion UI first (anyone), then retry this query.
+   - For each person id: if the response's "name" field is set, write it to the Known people table. If null/empty, mark it *(unresolved)* — a guest/removed member outside the integration's read scope; can't be filled automatically, must be resolved manually in the Notion UI.
+   - Never guess or hardcode a person-id. Write the final result in the exact Name | Person ID | Email table format — full example at ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md, "Known people" section.
+
 Your task now:
 1. Read this repo's structure (README, existing docs) to understand the project's domain.
 2. Ask me about anything unclear: name & purpose of the agent(s) to create, whether Notion integration is needed (if so ask for database ID + property list, or help me fetch it via API), any specific tasking rules to follow.
 3. Generate all files above with content tailored to this project, not empty templates.
-4. Tell me the row to add to workflow/projects.md in the orchestrator repo: "| <id> | <label> | <absolute path to this project> |".`,
+4. If there's a NOTION_TASK_SCHEMA.md with a people-type property: actually run the procedure in point 5 above to bootstrap its Known people table, don't just write an empty section.
+5. Tell me the row to add to workflow/projects.md in the orchestrator repo: "| <id> | <label> | <absolute path to this project> |".`,
   },
 };
 

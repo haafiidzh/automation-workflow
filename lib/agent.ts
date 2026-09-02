@@ -119,7 +119,13 @@ masih ada yang kurang/perlu ditanya, kirim \`notion_ticket_needs_input\` lagi
 \`notion_tickets\` final (array lengkap semua ticket di batch ini, dengan
 keputusan user soal open question/risk sudah dipertimbangkan) seperti kontrak
 di atas. Jangan pernah kirim \`notion_tickets\` dan \`notion_ticket_needs_input\`
-sekaligus.`;
+sekaligus.
+
+Jawaban user buat \`kind: "question"\`/\`"risk"\` WAJIB masuk ke \`content_markdown\`
+(mis. section "Open Questions" / "Risks" di body ticket), BUKAN ke \`properties\`.
+Jangan pernah tulis jawaban question/risk sebagai value properti Notion apa pun
+(termasuk properti free-text seperti Notes) — properti Notion cuma buat field
+asli sesuai NOTION_TASK_SCHEMA.md.`;
 
   return `${rules}\n\n---\n\n${docsListing}\n\n---\n\n${notionContract}`;
 }

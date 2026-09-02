@@ -48,6 +48,7 @@ export type SessionTurn = {
   text: string;
   toolCalls?: SessionToolCall[];
   timestamp: string;
+  notionStatuses?: NotionCreateStatus[];
 };
 
 export type SessionRecord = {

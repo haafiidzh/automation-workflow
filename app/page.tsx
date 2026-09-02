@@ -327,13 +327,28 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t.errors.notionCreate);
-      setMessageNotionStatus(index, ticketIndex, { state: "done", url: data.url });
+      const status: NotionCreateStatus = { state: "done", url: data.url };
+      setMessageNotionStatus(index, ticketIndex, status);
+      persistNotionStatus(index, ticketIndex, status);
     } catch (err) {
-      setMessageNotionStatus(index, ticketIndex, {
+      const status: NotionCreateStatus = {
         state: "error",
         message: err instanceof Error ? err.message : String(err),
-      });
+      };
+      setMessageNotionStatus(index, ticketIndex, status);
+      persistNotionStatus(index, ticketIndex, status);
     }
+  };
+
+  const persistNotionStatus = (turnIndex: number, ticketIndex: number, status: NotionCreateStatus) => {
+    if (!sessionId) return;
+    fetch(`/api/sessions/${sessionId}/notion-status`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turnIndex, ticketIndex, status }),
+    }).catch(() => {
+      // best-effort — local UI state already reflects the result
+    });
   };
 
   return (

@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import type { SessionRecord, SessionSummary, SessionTurn } from "./types";
+import type { NotionCreateStatus, SessionRecord, SessionSummary, SessionTurn } from "./types";
 
 const WORKFLOW_DIR = path.join(process.cwd(), "workflow");
 const SESSIONS_DIR = path.join(WORKFLOW_DIR, "sessions");
@@ -76,6 +76,31 @@ export function listSessions(projectId: string): SessionSummary[] {
   }
 
   return summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/**
+ * Persists the result of a Notion ticket-create action against the turn that
+ * generated it, so reopening the session later shows create/done/error state
+ * instead of resetting every ticket back to idle.
+ */
+export function updateTurnNotionStatus(params: {
+  sessionId: string;
+  turnIndex: number;
+  ticketIndex: number;
+  status: NotionCreateStatus;
+}): void {
+  const filePath = sessionFilePath(params.sessionId);
+  if (!fs.existsSync(filePath)) return;
+  const record = JSON.parse(fs.readFileSync(filePath, "utf-8")) as SessionRecord;
+  const turn = record.turns[params.turnIndex];
+  if (!turn || turn.role !== "assistant") return;
+
+  const statuses = [...(turn.notionStatuses ?? [])];
+  statuses[params.ticketIndex] = params.status;
+  turn.notionStatuses = statuses;
+  record.updatedAt = new Date().toISOString();
+
+  fs.writeFileSync(filePath, JSON.stringify(record, null, 2));
 }
 
 export function getSessionById(sessionId: string): SessionRecord | undefined {

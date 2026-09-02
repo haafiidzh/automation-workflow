@@ -1,3 +1,9 @@
+export type NotionCreateStatus =
+  | { state: "idle" }
+  | { state: "creating" }
+  | { state: "done"; url: string }
+  | { state: "error"; message: string };
+
 export type Project = {
   id: string;
   label: string;

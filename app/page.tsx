@@ -26,19 +26,13 @@ import {
   type NotionNeedsInput,
 } from "@/lib/notion-ticket";
 import { useLocale } from "@/lib/i18n/context";
-import type { ConfigResponse, ProjectScanResponse, SessionRecord } from "@/lib/types";
+import type { ConfigResponse, NotionCreateStatus, ProjectScanResponse, SessionRecord } from "@/lib/types";
 
 function lastAgentKey(projectId: string) {
   return `orchestrator:lastAgent:${projectId}`;
 }
 
 type ToolCall = { name: string; input: Record<string, unknown> };
-
-type NotionCreateStatus =
-  | { state: "idle" }
-  | { state: "creating" }
-  | { state: "done"; url: string }
-  | { state: "error"; message: string };
 
 type ChatMessage = {
   role: "user" | "assistant";

@@ -202,16 +202,46 @@ export function NotionTicketPreviewModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="relative flex max-h-[85vh] w-full max-w-2xl flex-col gap-0 overflow-visible p-0 sm:max-w-2xl"
+        className="flex max-h-[85vh] w-full max-w-2xl flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
+
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-xl border-b bg-popover px-4 py-3">
+          {hasMultiple ? (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={prevLabel}
+                disabled={index === 0}
+                onClick={() => setIndex((i) => Math.max(0, i - 1))}
+              >
+                <ChevronLeft />
+              </Button>
+              <span className="text-xs font-medium text-muted-foreground">
+                {counterLabel(index + 1, tickets.length)}
+              </span>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                title={nextLabel}
+                disabled={index === tickets.length - 1}
+                onClick={() => setIndex((i) => Math.min(tickets.length - 1, i + 1))}
+              >
+                <ChevronRight />
+              </Button>
+            </>
+          ) : (
+            <span className="mx-auto text-xs font-medium text-muted-foreground">{title}</span>
+          )}
+        </div>
 
         <DialogClose
           render={
             <Button
-              variant="secondary"
+              variant="ghost"
               size="icon-sm"
-              className="absolute -top-3 -right-3 z-30 rounded-full border bg-background shadow-md"
+              className="absolute top-2 right-2 z-20 rounded-full"
             />
           }
         >
@@ -219,38 +249,8 @@ export function NotionTicketPreviewModal({
           <span className="sr-only">Close</span>
         </DialogClose>
 
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-xl bg-popover [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-xl border-b bg-popover px-4 py-3">
-            {hasMultiple ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  title={prevLabel}
-                  disabled={index === 0}
-                  onClick={() => setIndex((i) => Math.max(0, i - 1))}
-                >
-                  <ChevronLeft />
-                </Button>
-                <span className="text-xs font-medium text-muted-foreground">
-                  {counterLabel(index + 1, tickets.length)}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  title={nextLabel}
-                  disabled={index === tickets.length - 1}
-                  onClick={() => setIndex((i) => Math.min(tickets.length - 1, i + 1))}
-                >
-                  <ChevronRight />
-                </Button>
-              </>
-            ) : (
-              <span className="mx-auto text-xs font-medium text-muted-foreground">{title}</span>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-3 px-4 pb-4 pt-3">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="flex min-w-0 flex-col gap-3 px-4 pb-4 pt-3">
             {ticket && <TicketBody ticket={ticket} title={title} emptyLabel={emptyLabel} locale={locale} />}
           </div>
         </div>

@@ -596,11 +596,9 @@ function NotionTicketCard({
         </span>
       </div>
       <div className="flex items-center gap-2">
-        {status.state !== "done" && (
-          <Button size="sm" variant="outline" onClick={() => setPreviewOpen(true)}>
-            {t.notionTicket.preview}
-          </Button>
-        )}
+        <Button size="sm" variant="outline" onClick={() => setPreviewOpen(true)}>
+          {t.notionTicket.preview}
+        </Button>
         {status.state === "idle" && (
           <Button size="sm" onClick={() => onCreate(activeIndex)}>
             {t.notionTicket.create}

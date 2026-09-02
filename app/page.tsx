@@ -162,11 +162,33 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error ?? t.sidebar.loadError);
       const record = data as SessionRecord;
       setMessages(
-        record.turns.map((turn) => ({
-          role: turn.role,
-          text: turn.text,
-          toolCalls: turn.toolCalls,
-        }))
+        record.turns.map((turn) => {
+          if (turn.role !== "assistant") {
+            return { role: turn.role, text: turn.text };
+          }
+          const tickets = parseNotionTickets(turn.text);
+          if (tickets) {
+            return {
+              role: turn.role,
+              text: stripNotionTicketBlock(turn.text),
+              toolCalls: turn.toolCalls,
+              notionTickets: tickets,
+              notionStatuses:
+                turn.notionStatuses ?? tickets.map(() => ({ state: "idle" as const })),
+              activeTicketIndex: 0,
+            };
+          }
+          const needsInput = parseNeedsInput(turn.text);
+          if (needsInput) {
+            return {
+              role: turn.role,
+              text: stripNotionTicketBlock(turn.text),
+              toolCalls: turn.toolCalls,
+              needsInput,
+            };
+          }
+          return { role: turn.role, text: turn.text, toolCalls: turn.toolCalls };
+        })
       );
       setSessionId(record.sessionId);
       setSelectedAgent(record.agentName);

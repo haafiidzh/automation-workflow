@@ -633,14 +633,20 @@ function NotionTicketCard({
       {tickets.length > 0 && (
         <NotionTicketPreviewModal
           tickets={tickets}
+          statuses={message.notionStatuses}
           initialIndex={activeIndex}
           open={previewOpen}
           onOpenChange={setPreviewOpen}
+          onCreate={onCreate}
           title={t.notionTicket.previewTitle}
           emptyLabel={t.notionTicket.previewEmpty}
           counterLabel={t.notionTicket.counter}
           prevLabel={t.notionTicket.prevTicket}
           nextLabel={t.notionTicket.nextTicket}
+          createLabel={t.notionTicket.create}
+          creatingLabel={t.notionTicket.creating}
+          openLabel={t.notionTicket.open}
+          retryLabel={t.notionTicket.retry}
         />
       )}
     </div>

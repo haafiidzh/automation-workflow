@@ -16,11 +16,13 @@ import {
   Square,
   SquareCheck,
   Users,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
 import { useLocale } from "@/lib/i18n/context";
+import type { NotionCreateStatus } from "@/lib/types";
 import {
   extractLeadingHeading,
   extractNotionTitle,
@@ -153,24 +155,36 @@ function TicketBody({
 
 export function NotionTicketPreviewModal({
   tickets,
+  statuses,
   open,
   onOpenChange,
+  onCreate,
   initialIndex = 0,
   title,
   emptyLabel,
   counterLabel,
   prevLabel,
   nextLabel,
+  createLabel,
+  creatingLabel,
+  openLabel,
+  retryLabel,
 }: {
   tickets: NotionTicket[];
+  statuses?: NotionCreateStatus[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onCreate: (ticketIndex: number) => void;
   initialIndex?: number;
   title: string;
   emptyLabel: string;
   counterLabel: (current: number, total: number) => string;
   prevLabel: string;
   nextLabel: string;
+  createLabel: string;
+  creatingLabel: string;
+  openLabel: string;
+  retryLabel: string;
 }) {
   const { locale } = useLocale();
   const [index, setIndex] = useState(initialIndex);
@@ -182,37 +196,95 @@ export function NotionTicketPreviewModal({
 
   const ticket = tickets[index];
   const hasMultiple = tickets.length > 1;
+  const status = statuses?.[index] ?? { state: "idle" as const };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        showCloseButton={false}
+        className="relative flex max-h-[85vh] w-full max-w-2xl flex-col gap-0 overflow-visible p-0 sm:max-w-2xl"
+      >
         <DialogTitle className="sr-only">{title}</DialogTitle>
-        {hasMultiple && (
-          <div className="flex items-center justify-between gap-2 -mt-1 mb-1">
+
+        <DialogClose
+          render={
             <Button
-              variant="ghost"
+              variant="secondary"
               size="icon-sm"
-              title={prevLabel}
-              disabled={index === 0}
-              onClick={() => setIndex((i) => Math.max(0, i - 1))}
-            >
-              <ChevronLeft />
-            </Button>
-            <span className="text-xs font-medium text-muted-foreground">
-              {counterLabel(index + 1, tickets.length)}
-            </span>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              title={nextLabel}
-              disabled={index === tickets.length - 1}
-              onClick={() => setIndex((i) => Math.min(tickets.length - 1, i + 1))}
-            >
-              <ChevronRight />
-            </Button>
+              className="absolute -top-3 -right-3 z-30 rounded-full border bg-background shadow-md"
+            />
+          }
+        >
+          <X className="size-4" />
+          <span className="sr-only">Close</span>
+        </DialogClose>
+
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto rounded-t-xl bg-popover [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          <div className="sticky top-0 z-10 flex items-center justify-between gap-2 rounded-t-xl border-b bg-popover px-4 py-3">
+            {hasMultiple ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title={prevLabel}
+                  disabled={index === 0}
+                  onClick={() => setIndex((i) => Math.max(0, i - 1))}
+                >
+                  <ChevronLeft />
+                </Button>
+                <span className="text-xs font-medium text-muted-foreground">
+                  {counterLabel(index + 1, tickets.length)}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  title={nextLabel}
+                  disabled={index === tickets.length - 1}
+                  onClick={() => setIndex((i) => Math.min(tickets.length - 1, i + 1))}
+                >
+                  <ChevronRight />
+                </Button>
+              </>
+            ) : (
+              <span className="mx-auto text-xs font-medium text-muted-foreground">{title}</span>
+            )}
           </div>
-        )}
-        {ticket && <TicketBody ticket={ticket} title={title} emptyLabel={emptyLabel} locale={locale} />}
+
+          <div className="flex flex-col gap-3 px-4 pb-4 pt-3">
+            {ticket && <TicketBody ticket={ticket} title={title} emptyLabel={emptyLabel} locale={locale} />}
+          </div>
+        </div>
+
+        <div className="flex shrink-0 justify-end gap-2 rounded-b-xl border-t bg-popover px-4 py-3">
+          {status.state === "idle" && (
+            <Button size="sm" onClick={() => onCreate(index)}>
+              {createLabel}
+            </Button>
+          )}
+          {status.state === "creating" && (
+            <Button size="sm" disabled>
+              {creatingLabel}
+            </Button>
+          )}
+          {status.state === "done" && (
+            <a
+              href={status.url}
+              target="_blank"
+              rel="noreferrer"
+              className="self-center text-sm text-primary underline underline-offset-2"
+            >
+              {openLabel}
+            </a>
+          )}
+          {status.state === "error" && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-destructive">{status.message}</span>
+              <Button size="sm" variant="outline" onClick={() => onCreate(index)}>
+                {retryLabel}
+              </Button>
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

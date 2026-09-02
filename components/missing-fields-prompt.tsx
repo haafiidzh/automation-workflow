@@ -58,10 +58,36 @@ export function MissingFieldsPrompt({
 
       {!done && current && (
         <div className="flex flex-col gap-2">
-          {current.ticket && (
-            <span className="text-xs font-medium text-muted-foreground">{current.ticket}</span>
+          {(current.ticket || current.kind) && (
+            <div className="flex items-center gap-1.5">
+              {current.ticket && (
+                <span className="text-xs font-medium text-muted-foreground">{current.ticket}</span>
+              )}
+              {current.kind && current.kind !== "field" && (
+                <span
+                  className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                    current.kind === "risk"
+                      ? "bg-destructive/10 text-destructive"
+                      : "bg-primary/10 text-primary"
+                  }`}
+                >
+                  {current.kind === "risk" ? mf.kindRisk : mf.kindQuestion}
+                </span>
+              )}
+            </div>
           )}
           <p className="text-sm">{current.prompt}</p>
+
+          {current.type === "confirm" && (
+            <div className="flex flex-wrap gap-1.5">
+              <Button size="sm" onClick={() => commit(mf.include)}>
+                {mf.include}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => commit(mf.skip)}>
+                {mf.skip}
+              </Button>
+            </div>
+          )}
 
           {(current.type === "people" || current.type === "select") && (
             <div className="flex flex-wrap gap-1.5">

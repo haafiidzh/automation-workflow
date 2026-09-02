@@ -54,6 +54,11 @@ type Dictionary = {
   missingFields: {
     confirm: string;
     pickDate: string;
+    include: string;
+    skip: string;
+    kindField: string;
+    kindQuestion: string;
+    kindRisk: string;
   };
   sidebar: {
     collapse: string;
@@ -142,6 +147,11 @@ const id: Dictionary = {
   missingFields: {
     confirm: "Konfirmasi",
     pickDate: "Pilih tanggal",
+    include: "Ya, sertakan",
+    skip: "Tidak, abaikan",
+    kindField: "Properti wajib",
+    kindQuestion: "Open question",
+    kindRisk: "Risk",
   },
   sidebar: {
     collapse: "Sembunyikan riwayat sesi",
@@ -295,6 +305,11 @@ const en: Dictionary = {
   missingFields: {
     confirm: "Confirm",
     pickDate: "Pick a date",
+    include: "Yes, include it",
+    skip: "No, skip it",
+    kindField: "Required field",
+    kindQuestion: "Open question",
+    kindRisk: "Risk",
   },
   sidebar: {
     collapse: "Hide session history",

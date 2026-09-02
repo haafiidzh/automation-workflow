@@ -71,8 +71,17 @@ dihilangkan.
 Kalau ada properti wajib (menurut tasking.md) yang TIDAK bisa kamu isi dengan aman
 dari pesan user atau docs project — untuk SALAH SATU ticket pun — JANGAN
 menebak/mengarang nilainya, dan JANGAN kirim \`notion_tickets\` sama sekali untuk
-semua ticket dalam batch ini. Sebagai gantinya, akhiri respons dengan blok
-\`json\` ini yang mencakup field yang kurang dari SEMUA ticket yang diminta:
+semua ticket dalam batch ini.
+
+Begitu juga kalau, pas menyusun brief/ticket, kamu nemu **open question** (hal
+yang ambigu/belum jelas dari pesan user) atau **risk** (potensi masalah yang
+user perlu tahu/putuskan) — JANGAN diam-diam memutuskan sendiri dan JANGAN
+selipin asumsi kamu langsung ke \`content_markdown\` tanpa persetujuan user.
+Perlakukan ini sama seperti properti wajib yang kurang: tahan \`notion_tickets\`,
+dan tanyakan dulu ke user satu per satu lewat kontrak di bawah.
+
+Akhiri respons dengan blok \`json\` ini yang mencakup SEMUA hal yang perlu
+ditanyakan (field kurang + open question + risk) dari SEMUA ticket yang diminta:
 
 \`\`\`json
 {
@@ -80,8 +89,9 @@ semua ticket dalam batch ini. Sebagai gantinya, akhiri respons dengan blok
     "fields": [
       {
         "ticket": "<label singkat buat bedain ticket ini dari ticket lain di batch yang sama, mis. 'Backend - Arfan'; kosongkan/hilangkan kalau cuma 1 ticket>",
-        "property": "<nama properti persis seperti di NOTION_TASK_SCHEMA.md>",
-        "type": "people | select | date | text",
+        "property": "<nama properti Notion persis seperti di NOTION_TASK_SCHEMA.md kalau kind='field'; kalau kind='question'/'risk', isi label singkat buat pertanyaan itu, mis. 'Risk: rate limit API'>",
+        "type": "people | select | date | text | confirm",
+        "kind": "field | question | risk",
         "prompt": "pertanyaan singkat buat user",
         "options": [{ "id": "<id/value Notion API asli>", "label": "<label buat ditampilkan>" }]
       }
@@ -90,15 +100,26 @@ semua ticket dalam batch ini. Sebagai gantinya, akhiri respons dengan blok
 }
 \`\`\`
 
-\`options\` wajib diisi untuk type \`people\`/\`select\` (ambil dari schema/known-people
-yang sudah kamu baca), kosongkan/hilangkan untuk type \`date\`/\`text\`. Jawaban user
-akan datang sebagai pesan berikutnya (format "<Property>: <value>" per baris, atau
-"<Ticket> / <Property>: <value>" kalau field-nya kamu tandai per ticket) — pas
-itu terjadi, evaluasi ulang: kalau masih ada yang kurang, kirim
-\`notion_ticket_needs_input\` lagi (hanya untuk sisa yang belum terisi), kalau sudah
-lengkap kirim \`notion_tickets\` final (array lengkap semua ticket di batch ini)
-seperti kontrak di atas. Jangan pernah kirim \`notion_tickets\` dan
-\`notion_ticket_needs_input\` sekaligus.`;
+\`kind\` default ke \`field\` kalau dihilangkan (buat properti wajib yang kurang).
+Pakai \`kind: "question"\` buat open question, \`kind: "risk"\` buat risk. Untuk
+\`question\`/\`risk\`, biasanya pakai \`type: "confirm"\` (user tinggal pilih
+sertakan/abaikan) atau \`type: "text"\` kalau butuh jawaban bebas dari user —
+JANGAN pakai \`type: "people"/"select"/"date"\` untuk kind ini karena bukan
+properti Notion asli. \`options\` wajib diisi untuk type \`people\`/\`select\`
+(ambil dari schema/known-people yang sudah kamu baca), kosongkan/hilangkan
+untuk type lain.
+
+Field-field ini ditanyakan ke user SATU PER SATU (bukan sekaligus) di UI —
+kamu cukup kirim semuanya dalam satu array \`fields\`, urutan tampil ikut
+urutan array. Jawaban user akan datang sebagai pesan berikutnya (format
+"<Property>: <value>" per baris, atau "<Ticket> / <Property>: <value>" kalau
+field-nya kamu tandai per ticket) — pas itu terjadi, evaluasi ulang: kalau
+masih ada yang kurang/perlu ditanya, kirim \`notion_ticket_needs_input\` lagi
+(hanya untuk sisa yang belum terjawab), kalau sudah lengkap kirim
+\`notion_tickets\` final (array lengkap semua ticket di batch ini, dengan
+keputusan user soal open question/risk sudah dipertimbangkan) seperti kontrak
+di atas. Jangan pernah kirim \`notion_tickets\` dan \`notion_ticket_needs_input\`
+sekaligus.`;
 
   return `${rules}\n\n---\n\n${docsListing}\n\n---\n\n${notionContract}`;
 }

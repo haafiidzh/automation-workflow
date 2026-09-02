@@ -70,7 +70,8 @@ export function stripNotionTicketBlock(text: string): string {
 export type NeedsInputField = {
   ticket?: string;
   property: string;
-  type: "people" | "select" | "date" | "text";
+  type: "people" | "select" | "date" | "text" | "confirm";
+  kind?: "field" | "question" | "risk";
   prompt: string;
   options?: { id: string; label: string }[];
 };
@@ -109,7 +110,8 @@ export function parseNeedsInput(text: string): NotionNeedsInput | null {
     return null;
   }
 
-  const validTypes = new Set(["people", "select", "date", "text"]);
+  const validTypes = new Set(["people", "select", "date", "text", "confirm"]);
+  const validKinds = new Set(["field", "question", "risk"]);
   const fields = ((payload as { fields: unknown[] }).fields)
     .filter((f): f is NeedsInputField => {
       if (typeof f !== "object" || f === null) return false;
@@ -117,6 +119,7 @@ export function parseNeedsInput(text: string): NotionNeedsInput | null {
       if (typeof o.property !== "string" || typeof o.prompt !== "string") return false;
       if (typeof o.type !== "string" || !validTypes.has(o.type)) return false;
       if (o.ticket !== undefined && typeof o.ticket !== "string") return false;
+      if (o.kind !== undefined && (typeof o.kind !== "string" || !validKinds.has(o.kind))) return false;
       if (o.options !== undefined) {
         if (!Array.isArray(o.options)) return false;
         return o.options.every(

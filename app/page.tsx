@@ -2,7 +2,21 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { ArrowUp, ChevronLeft, ChevronRight, Moon, RefreshCw, SquarePen, Sun } from "lucide-react";
+import {
+  ArrowUp,
+  ChevronLeft,
+  ChevronRight,
+  FileSpreadsheet,
+  FileText,
+  Image as ImageIcon,
+  Moon,
+  Paperclip,
+  Plus,
+  RefreshCw,
+  SquarePen,
+  Sun,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -26,24 +40,44 @@ import {
   type NotionNeedsInput,
 } from "@/lib/notion-ticket";
 import { useLocale } from "@/lib/i18n/context";
-import type { ConfigResponse, NotionCreateStatus, ProjectScanResponse, SessionRecord } from "@/lib/types";
+import type {
+  AttachmentMeta,
+  ConfigResponse,
+  Disturbance,
+  NotionCreateStatus,
+  ProjectScanResponse,
+  SessionRecord,
+} from "@/lib/types";
 
 function lastAgentKey(projectId: string) {
   return `orchestrator:lastAgent:${projectId}`;
 }
 
+const MAX_UPLOAD_MB = 10;
+const ACCEPTED_FILE_TYPES =
+  "image/png,image/jpeg,image/webp,image/gif,application/pdf,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 type ToolCall = { name: string; input: Record<string, unknown> };
+
+type PendingAttachment = AttachmentMeta & { status: "uploading" | "done" | "error"; error?: string };
 
 type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   toolCalls?: ToolCall[];
+  attachments?: AttachmentMeta[];
   notionTickets?: NotionTicket[];
   notionStatuses?: NotionCreateStatus[];
   activeTicketIndex?: number;
   needsInput?: NotionNeedsInput;
   needsInputResolved?: boolean;
 };
+
+function attachmentIcon(kind: AttachmentMeta["kind"]) {
+  if (kind === "image") return ImageIcon;
+  if (kind === "excel") return FileSpreadsheet;
+  return FileText;
+}
 
 function describeToolCall(t: ToolCall): string {
   const target = (t.input.file_path as string) || (t.input.pattern as string) || "";
@@ -69,9 +103,16 @@ export default function Home() {
   const [sending, setSending] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
   const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [uploadDraftId, setUploadDraftId] = useState<string>(() => crypto.randomUUID());
+  const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
+  const [disturbMode, setDisturbMode] = useState<"note" | "doc" | null>(null);
+  const [disturbNoteInput, setDisturbNoteInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const stickToBottomRef = useRef(true);
+  const pendingAgentRef = useRef<string | null>(null);
 
   const sessionStarted = messages.length > 0 || sending;
 
@@ -98,7 +139,11 @@ export default function Home() {
       })
       .then((data) => {
         setScan(data);
-        if (data.agents.length === 1) {
+        const pending = pendingAgentRef.current;
+        pendingAgentRef.current = null;
+        if (pending && data.agents.some((a) => a.name === pending)) {
+          setSelectedAgent(pending);
+        } else if (data.agents.length === 1) {
           setSelectedAgent(data.agents[0].name);
         } else {
           const remembered =
@@ -153,6 +198,66 @@ export default function Home() {
     setSessionId(undefined);
     setChatError(null);
     setInput("");
+    setPendingAttachments([]);
+    setUploadDraftId(crypto.randomUUID());
+    setDisturbances([]);
+    setDisturbMode(null);
+    setDisturbNoteInput("");
+  };
+
+  const handleFileSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const targetSessionId = sessionId ?? uploadDraftId;
+
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+        setChatError(t.composer.attachTooBig(MAX_UPLOAD_MB));
+        continue;
+      }
+
+      const placeholderId = `pending-${crypto.randomUUID()}`;
+      const guessedKind: AttachmentMeta["kind"] = file.type.startsWith("image/")
+        ? "image"
+        : file.type === "application/pdf"
+          ? "pdf"
+          : "excel";
+      setPendingAttachments((a) => [
+        ...a,
+        {
+          fileId: placeholderId,
+          name: file.name,
+          mime: file.type,
+          kind: guessedKind,
+          size: file.size,
+          status: "uploading",
+        },
+      ]);
+
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("sessionId", targetSessionId);
+        const res = await fetch("/api/upload", { method: "POST", body: form });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? t.errors.uploadFailed);
+        const meta = data as AttachmentMeta;
+        setPendingAttachments((a) =>
+          a.map((p) => (p.fileId === placeholderId ? { ...meta, status: "done" } : p))
+        );
+      } catch (err) {
+        setPendingAttachments((a) =>
+          a.map((p) =>
+            p.fileId === placeholderId
+              ? { ...p, status: "error", error: err instanceof Error ? err.message : String(err) }
+              : p
+          )
+        );
+      }
+    }
+  };
+
+  const removePendingAttachment = (fileId: string) => {
+    setPendingAttachments((a) => a.filter((p) => p.fileId !== fileId));
   };
 
   const handleSelectSession = async (id: string) => {
@@ -164,7 +269,7 @@ export default function Home() {
       setMessages(
         record.turns.map((turn) => {
           if (turn.role !== "assistant") {
-            return { role: turn.role, text: turn.text };
+            return { role: turn.role, text: turn.text, attachments: turn.attachments };
           }
           const tickets = parseNotionTickets(turn.text);
           if (tickets) {
@@ -191,8 +296,13 @@ export default function Home() {
         })
       );
       setSessionId(record.sessionId);
-      setSelectedAgent(record.agentName);
       setSelectedNotion(record.notionAccountId);
+      if (record.projectId !== selectedProjectId) {
+        pendingAgentRef.current = record.agentName;
+        setSelectedProjectId(record.projectId);
+      } else {
+        setSelectedAgent(record.agentName);
+      }
       setChatError(null);
       setInput("");
     } catch (err) {
@@ -203,11 +313,20 @@ export default function Home() {
   const sendMessage = async (overrideText?: string) => {
     const userText = (overrideText ?? input).trim();
     if (!userText || !readyToChat || sending) return;
+    if (pendingAttachments.some((a) => a.status === "uploading")) return;
+    const readyAttachments: AttachmentMeta[] = pendingAttachments
+      .filter((a) => a.status === "done")
+      .map(({ fileId, name, mime, kind, size }) => ({ fileId, name, mime, kind, size }));
     if (overrideText === undefined) setInput("");
     setChatError(null);
     stickToBottomRef.current = true;
-    setMessages((m) => [...m, { role: "user", text: userText }]);
+    const uploadSessionIdForTurn = sessionId ?? uploadDraftId;
+    setMessages((m) => [
+      ...m,
+      { role: "user", text: userText, attachments: readyAttachments.length ? readyAttachments : undefined },
+    ]);
     setMessages((m) => [...m, { role: "assistant", text: "", toolCalls: [] }]);
+    setPendingAttachments([]);
     setSending(true);
 
     try {
@@ -220,6 +339,9 @@ export default function Home() {
           notionAccountId: selectedNotion,
           message: userText,
           sessionId,
+          uploadSessionId: readyAttachments.length ? uploadSessionIdForTurn : undefined,
+          attachments: readyAttachments.length ? readyAttachments : undefined,
+          disturbances: disturbances.length ? disturbances : undefined,
         }),
       });
 
@@ -337,6 +459,26 @@ export default function Home() {
     });
   };
 
+  const addDisturbNote = () => {
+    const text = disturbNoteInput.trim();
+    if (!text) return;
+    setDisturbances((d) => [...d, { type: "note", text }]);
+    setDisturbNoteInput("");
+    setDisturbMode(null);
+  };
+
+  const addDisturbDoc = (fileName: string) => {
+    setDisturbances((d) => {
+      if (d.some((x) => x.type === "doc" && x.fileName === fileName)) return d;
+      return [...d, { type: "doc", fileName }];
+    });
+    setDisturbMode(null);
+  };
+
+  const removeDisturbance = (index: number) => {
+    setDisturbances((d) => d.filter((_, i) => i !== index));
+  };
+
   const createNotionTicket = async (index: number, ticketIndex: number) => {
     const ticket = messages[index]?.notionTickets?.[ticketIndex];
     if (!ticket) return;
@@ -346,6 +488,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ notionAccountId: selectedNotion, ticket }),
+        signal: AbortSignal.timeout(25_000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t.errors.notionCreate);
@@ -353,9 +496,10 @@ export default function Home() {
       setMessageNotionStatus(index, ticketIndex, status);
       persistNotionStatus(index, ticketIndex, status);
     } catch (err) {
+      const isTimeout = err instanceof Error && err.name === "TimeoutError";
       const status: NotionCreateStatus = {
         state: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: isTimeout ? t.errors.notionTimeout : err instanceof Error ? err.message : String(err),
       };
       setMessageNotionStatus(index, ticketIndex, status);
       persistNotionStatus(index, ticketIndex, status);
@@ -428,6 +572,21 @@ export default function Home() {
                     🔧 {describeToolCall(t)}...
                   </div>
                 ))}
+                {m.attachments && m.attachments.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mb-1.5">
+                    {m.attachments.map((att) => {
+                      const Icon = attachmentIcon(att.kind);
+                      return (
+                        <span
+                          key={att.fileId}
+                          className="inline-flex items-center gap-1 rounded-full bg-background/60 border px-2 py-0.5 text-xs"
+                        >
+                          <Icon className="size-3" /> {att.name}
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
                 {m.role === "assistant" ? (
                   (() => {
                     const { visible, generatingTicket } = splitStreamingText(m.text);
@@ -475,7 +634,7 @@ export default function Home() {
           <p className="max-w-3xl mx-auto text-destructive text-xs mb-2">{configError}</p>
         )}
         <div className="max-w-3xl mx-auto rounded-3xl border bg-card shadow-sm px-3 pt-3 pb-2 flex flex-col gap-2">
-          {/* Dropdown row — the ChatGPT-diff: project/agent/notion pickers instead of tool pickers */}
+          {/* Dropdown row — the ChatGPT-diff: project/notion/agent pickers instead of tool pickers */}
           <div className="flex flex-wrap items-center gap-2 px-1">
             <Select
               value={selectedProjectId || undefined}
@@ -501,23 +660,6 @@ export default function Home() {
             </Select>
 
             <Select
-              value={selectedAgent || undefined}
-              disabled={!selectedProjectId || scanLoading || !scan?.validation.valid || sessionStarted}
-              onValueChange={(v) => handleAgentChange(v ?? "")}
-            >
-              <SelectTrigger size="sm" className="rounded-full">
-                <SelectValue placeholder={scanLoading ? t.composer.agentLoading : t.composer.agentPlaceholder} />
-              </SelectTrigger>
-              <SelectContent>
-                {scan?.agents.map((a) => (
-                  <SelectItem key={a.name} value={a.name} title={a.description}>
-                    {a.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            <Select
               value={selectedNotion || undefined}
               disabled={sessionStarted}
               onValueChange={(v) => setSelectedNotion(v ?? "")}
@@ -529,6 +671,23 @@ export default function Home() {
                 {config?.notionAccounts.map((n) => (
                   <SelectItem key={n.id} value={n.id} disabled={!n.available}>
                     {n.label} {n.available ? "" : t.composer.emptyLabel}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            <Select
+              value={selectedAgent || undefined}
+              disabled={!selectedProjectId || scanLoading || !scan?.validation.valid || sending}
+              onValueChange={(v) => handleAgentChange(v ?? "")}
+            >
+              <SelectTrigger size="sm" className="rounded-full">
+                <SelectValue placeholder={scanLoading ? t.composer.agentLoading : t.composer.agentPlaceholder} />
+              </SelectTrigger>
+              <SelectContent>
+                {scan?.agents.map((a) => (
+                  <SelectItem key={a.name} value={a.name} title={a.description}>
+                    {a.name}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -552,8 +711,191 @@ export default function Home() {
             </p>
           )}
 
+          {pendingAttachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {pendingAttachments.map((att) => {
+                const Icon = attachmentIcon(att.kind);
+                return (
+                  <span
+                    key={att.fileId}
+                    className={
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs " +
+                      (att.status === "error" ? "border-destructive text-destructive" : "text-muted-foreground")
+                    }
+                    title={att.status === "error" ? att.error : att.name}
+                  >
+                    {att.status === "uploading" ? (
+                      <span className="size-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                    ) : (
+                      <Icon className="size-3" />
+                    )}
+                    {att.name}
+                    <button
+                      type="button"
+                      onClick={() => removePendingAttachment(att.fileId)}
+                      title={t.composer.attachRemove}
+                      className="hover:text-foreground"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+
+          {disturbances.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-1">
+              {disturbances.map((d, i) => (
+                <span
+                  key={i}
+                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-primary/40 bg-primary/5 px-2 py-0.5 text-xs text-primary"
+                >
+                  {d.type === "note" ? d.text : d.fileName}
+                  <button
+                    type="button"
+                    onClick={() => removeDisturbance(i)}
+                    title={t.disturb.remove}
+                    className="hover:text-foreground"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {disturbMode && (
+            <div className="px-1">
+              {disturbMode === "note" ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    autoFocus
+                    value={disturbNoteInput}
+                    onChange={(e) => setDisturbNoteInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        addDisturbNote();
+                      } else if (e.key === "Escape") {
+                        setDisturbMode(null);
+                        setDisturbNoteInput("");
+                      }
+                    }}
+                    placeholder={t.disturb.notePlaceholder}
+                    className="flex-1 text-xs bg-transparent border-b border-primary/30 focus:border-primary outline-none py-1"
+                  />
+                  <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={addDisturbNote}>
+                    OK
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-xs"
+                    onClick={() => { setDisturbMode(null); setDisturbNoteInput(""); }}
+                  >
+                    {t.disturb.remove}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1">
+                  <span className="text-xs text-muted-foreground w-full mb-0.5">{t.disturb.docListTitle}</span>
+                  {scan?.docsFiles.map((f) => {
+                    const alreadyAdded = disturbances.some((d) => d.type === "doc" && d.fileName === f);
+                    return (
+                      <button
+                        key={f}
+                        type="button"
+                        disabled={alreadyAdded}
+                        onClick={() => addDisturbDoc(f)}
+                        className={
+                          "text-xs rounded-full border px-2 py-0.5 transition-colors " +
+                          (alreadyAdded
+                            ? "border-muted text-muted-foreground cursor-default"
+                            : "border-primary/30 text-primary hover:bg-primary/10 cursor-pointer")
+                        }
+                      >
+                        {f}
+                      </button>
+                    );
+                  })}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-xs mt-0.5"
+                    onClick={() => setDisturbMode(null)}
+                  >
+                    {t.disturb.remove}
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Input row */}
           <div className="flex items-end gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ACCEPTED_FILE_TYPES}
+              className="hidden"
+              onChange={(e) => {
+                handleFileSelect(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full mb-1"
+              disabled={!readyToChat || sending}
+              onClick={() => fileInputRef.current?.click()}
+              title={t.composer.attachTitle}
+            >
+              <Paperclip />
+            </Button>
+            <div className="relative">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="rounded-full mb-1"
+                disabled={!readyToChat || sending}
+                onClick={() => setDisturbMode(disturbMode ? null : "note")}
+                title={t.disturb.button}
+              >
+                <Plus />
+              </Button>
+              {disturbMode && (
+                <div className="absolute bottom-full left-0 mb-1 flex gap-1 z-10">
+                  <button
+                    type="button"
+                    onClick={() => setDisturbMode("note")}
+                    className={
+                      "text-xs rounded-full border px-2 py-0.5 whitespace-nowrap transition-colors " +
+                      (disturbMode === "note"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-muted text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    {t.disturb.addNote}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDisturbMode("doc")}
+                    className={
+                      "text-xs rounded-full border px-2 py-0.5 whitespace-nowrap transition-colors " +
+                      (disturbMode === "doc"
+                        ? "border-primary bg-primary/10 text-primary"
+                        : "border-muted text-muted-foreground hover:text-foreground")
+                    }
+                  >
+                    {t.disturb.addDoc}
+                  </button>
+                </div>
+              )}
+            </div>
             <Textarea
               className="flex-1 resize-none border-none shadow-none bg-transparent focus-visible:ring-0 text-[15px] px-1 py-1.5 max-h-[200px] min-h-0 field-sizing-content"
               placeholder={readyToChat ? t.composer.inputPlaceholder : t.composer.inputPlaceholderNotReady}
@@ -571,7 +913,12 @@ export default function Home() {
               size="icon"
               className="rounded-full mb-1"
               onClick={() => sendMessage()}
-              disabled={!readyToChat || sending || !input.trim()}
+              disabled={
+                !readyToChat ||
+                sending ||
+                !input.trim() ||
+                pendingAttachments.some((a) => a.status === "uploading")
+              }
               title={t.composer.send}
             >
               {sending ? <span className="w-2 h-2 rounded-full bg-current" /> : <ArrowUp />}

@@ -28,6 +28,11 @@ type Dictionary = {
     send: string;
     incompleteLabel: string;
     emptyLabel: string;
+    attachTitle: string;
+    attachTooBig: (maxMb: number) => string;
+    attachUnsupported: string;
+    attachUploading: string;
+    attachRemove: string;
   };
   errors: {
     configLoad: string;
@@ -35,6 +40,8 @@ type Dictionary = {
     chatFailed: string;
     sessionError: string;
     notionCreate: string;
+    notionTimeout: string;
+    uploadFailed: string;
   };
   notionTicket: {
     ready: string;
@@ -59,6 +66,14 @@ type Dictionary = {
     kindField: string;
     kindQuestion: string;
     kindRisk: string;
+  };
+  disturb: {
+    button: string;
+    addNote: string;
+    addDoc: string;
+    notePlaceholder: string;
+    remove: string;
+    docListTitle: string;
   };
   sidebar: {
     collapse: string;
@@ -124,6 +139,11 @@ const id: Dictionary = {
     send: "Kirim",
     incompleteLabel: "(tidak lengkap)",
     emptyLabel: "(kosong)",
+    attachTitle: "Lampirkan gambar, PDF, atau Excel (maks 10MB)",
+    attachTooBig: (maxMb) => `File melebihi batas ${maxMb}MB`,
+    attachUnsupported: "Tipe file tidak didukung (hanya gambar, PDF, Excel .xlsx)",
+    attachUploading: "Mengunggah…",
+    attachRemove: "Hapus lampiran",
   },
   errors: {
     configLoad: "Gagal memuat /api/config",
@@ -131,6 +151,8 @@ const id: Dictionary = {
     chatFailed: "Request gagal",
     sessionError: "Sesi berakhir dengan error.",
     notionCreate: "Gagal membuat page Notion",
+    notionTimeout: "Waktu tunggu habis — server tidak merespons, coba lagi",
+    uploadFailed: "Gagal mengunggah file",
   },
   notionTicket: {
     ready: "Ticket Notion siap dibuat",
@@ -155,6 +177,14 @@ const id: Dictionary = {
     kindField: "Properti wajib",
     kindQuestion: "Open question",
     kindRisk: "Risk",
+  },
+  disturb: {
+    button: "Tambah konteks",
+    addNote: "Tambah catatan",
+    addDoc: "Tambah dokumen",
+    notePlaceholder: "Ketik catatan atau constraint…",
+    remove: "Hapus",
+    docListTitle: "Pilih dokumen project",
   },
   sidebar: {
     collapse: "Sembunyikan riwayat sesi",
@@ -196,9 +226,14 @@ const id: Dictionary = {
       "Baris yang butuh input user (bukan yang auto/default/hardcode) bikin agent munculin picker interaktif di chat: pilihan people/select jadi tombol, date jadi date-picker, sisanya jadi input teks. Baris yang sudah pasti/default (kayak Reviewer di atas) tidak akan ditanyakan.",
     guideStepPeopleTitle:
       "Kalau ada properti type people (Programmer/Reviewer dsb), isi tabel \"Known people\" di NOTION_TASK_SCHEMA.md — JANGAN pakai GET /v1/users, itu cuma balikin identity yang sudah connect ke integration (biasanya cuma workspace owner + bot-nya sendiri), bukan semua member workspace:",
-    guideStepPeopleCode: `# 1) query database, page_size 100, paginate pakai has_more + next_cursor
-curl -s -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
-  -H "Authorization: Bearer $NOTION_API_KEY" \\
+    guideStepPeopleCode: `# token di .claude/notion.curlrc (gitignored), BUKAN env var — command
+# yang pakai $NOTION_API_KEY kena permission prompt tiap kali walau prefix-nya
+# sudah di-allow, karena variable expansion di Bash selalu dianggap butuh
+# approval terpisah. Isi file itu cuma 1 baris:
+#   header = "Authorization: Bearer <token-mentah>"
+#
+# 1) query database, page_size 100, paginate pakai has_more + next_cursor
+curl -s -K .claude/notion.curlrc -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
   -H "Notion-Version: 2022-06-28" \\
   -H "Content-Type: application/json" \\
   -d '{"page_size": 100}'
@@ -217,16 +252,16 @@ curl -s -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
     guideStepPeopleNote:
       "Jangan pernah nebak/hardcode person-id. Hasil akhir ditulis ke NOTION_TASK_SCHEMA.md persis format tabel Name | Person ID | Email — contoh lengkap di ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md bagian \"Known people\".",
     guideStepSettingsTitle:
-      "Kalau agent project ini dijalankan langsung lewat Claude Code (bukan lewat app orchestrator ini) dan query Notion pakai Bash + curl + $NOTION_API_KEY sendiri (bukan tool query_database bawaan app), tambah .claude/settings.json biar tidak muncul permission prompt tiap query. Scope izinnya sesempit mungkin — curl ke database ID spesifik, bukan curl secara umum:",
+      "Kalau agent project ini dijalankan langsung lewat Claude Code (bukan lewat app orchestrator ini) dan query Notion pakai Bash + curl sendiri (bukan tool query_database bawaan app), buat .claude/notion.curlrc (gitignored, isi satu baris header Authorization — lihat contoh di atas) lalu tambah .claude/settings.json biar tidak muncul permission prompt tiap query. Command WAJIB pakai -K .claude/notion.curlrc, JANGAN taruh token lewat -H \"Authorization: Bearer $NOTION_API_KEY\" — command yang punya variable expansion ($VAR / $(...)) tetap kena approval manual walau prefix-nya sudah masuk allow list. Scope izinnya sesempit mungkin — curl ke database ID spesifik, bukan curl secara umum:",
     guideStepSettingsCode: `{
   "permissions": {
     "allow": [
-      "Bash(curl -s https://api.notion.com/v1/databases/<database_id>*)"
+      "Bash(curl -s -K .claude/notion.curlrc -X POST https://api.notion.com/v1/databases/<database_id>*)"
     ]
   }
 }`,
     guideStepSettingsNote:
-      "Commit file ini (settings.json, bukan settings.local.json) supaya izinnya berlaku buat semua orang yang jalanin agent ini, tidak cuma kamu.",
+      "Commit settings.json (bukan settings.local.json) supaya izinnya berlaku buat semua orang yang jalanin agent ini. Commit juga .gitignore yang exclude .claude/notion.curlrc — file itu isi token mentah, jangan pernah ikut ke-commit.",
     guideStep3: [
       'Paling gampang: pakai tab "Prompt AI setup" — copy, tempel ke Claude Code (atau agent lain) yang jalan di folder project barumu. Dia akan wawancara singkat lalu generate semua file di atas.',
     ],
@@ -266,9 +301,11 @@ Ketentuan tiap file:
    - Kalau ada NOTION_TASK_SCHEMA.md: wajib cantumkan Database ID, workspace, dan tabel lengkap semua Properties Notion (nama, type, opsi/select values) — agent baca ini buat nyusun "properties" sesuai bentuk asli Notion API (mis. {"Name": {"title": [...]}}).
    - Tambahkan juga section "## Required fields (task creation)" — tabel \`Property | Rule\` berisi properti yang WAJIB diisi tiap task dibuat. Untuk baris yang nilainya harus ditanya ke user (bukan auto/default/hardcode), tulis rule-nya jelas (mis. "assignee — ask if not given", "only if user gives one explicit — no invent"). Ini yang bikin app munculin picker interaktif (tombol pilihan / date-picker) di chat kalau propertinya belum keisi — lihat contoh lengkap di ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md.
 
-4. .claude/settings.json (cuma kalau agent project ini juga dipakai langsung lewat Claude Code, bukan cuma lewat orchestrator app, dan dia query Notion pakai Bash + curl + $NOTION_API_KEY)
-   - Tambah permissions.allow discope sesempit mungkin ke curl database ID itu saja, contoh: {"permissions":{"allow":["Bash(curl -s https://api.notion.com/v1/databases/<database_id>*)"]}}
-   - Commit file ini (bukan settings.local.json) biar izinnya kepakai buat semua orang, bukan cuma kamu.
+4. .claude/settings.json + .claude/notion.curlrc (cuma kalau agent project ini juga dipakai langsung lewat Claude Code, bukan cuma lewat orchestrator app, dan dia query Notion pakai Bash + curl)
+   - Taruh token di .claude/notion.curlrc (gitignored), isi satu baris: header = "Authorization: Bearer <token-mentah>". JANGAN pakai $NOTION_API_KEY inline di command curl — command dengan variable expansion tetap kena permission prompt manual walau prefix-nya sudah di-allow.
+   - Command curl WAJIB pakai -K .claude/notion.curlrc, bukan -H "Authorization: ...".
+   - Tambah permissions.allow discope sesempit mungkin, contoh: {"permissions":{"allow":["Bash(curl -s -K .claude/notion.curlrc -X POST https://api.notion.com/v1/databases/<database_id>*)"]}}
+   - Commit settings.json (bukan settings.local.json) biar izinnya kepakai buat semua orang, bukan cuma kamu. Pastikan .claude/notion.curlrc masuk .gitignore.
 
 5. Tabel "Known people" (Programmer/Reviewer) di NOTION_TASK_SCHEMA.md — cuma kalau ada property type people
    - JANGAN pakai GET /v1/users buat resolve nama ke person-id. Integration token cuma bisa lihat identity yang sudah connect ke integration itu (biasanya cuma workspace owner + bot-nya sendiri), bukan semua member workspace.
@@ -314,6 +351,11 @@ const en: Dictionary = {
     send: "Send",
     incompleteLabel: "(incomplete)",
     emptyLabel: "(empty)",
+    attachTitle: "Attach an image, PDF, or Excel file (max 10MB)",
+    attachTooBig: (maxMb) => `File exceeds the ${maxMb}MB limit`,
+    attachUnsupported: "Unsupported file type (only images, PDF, Excel .xlsx)",
+    attachUploading: "Uploading…",
+    attachRemove: "Remove attachment",
   },
   errors: {
     configLoad: "Failed to load /api/config",
@@ -321,6 +363,8 @@ const en: Dictionary = {
     chatFailed: "Request failed",
     sessionError: "Session ended with an error.",
     notionCreate: "Failed to create Notion page",
+    notionTimeout: "Request timed out — server did not respond, try again",
+    uploadFailed: "Failed to upload file",
   },
   notionTicket: {
     ready: "Notion ticket ready to create",
@@ -345,6 +389,14 @@ const en: Dictionary = {
     kindField: "Required field",
     kindQuestion: "Open question",
     kindRisk: "Risk",
+  },
+  disturb: {
+    button: "Add context",
+    addNote: "Add note",
+    addDoc: "Add doc",
+    notePlaceholder: "Type a note or constraint…",
+    remove: "Remove",
+    docListTitle: "Pick project doc",
   },
   sidebar: {
     collapse: "Hide session history",
@@ -386,9 +438,14 @@ const en: Dictionary = {
       "A row that needs user input (not auto/default/hardcoded) makes the agent show an interactive picker in chat: people/select options become buttons, date becomes a date-picker, anything else becomes a text input. A row that's already fixed/default (like Reviewer above) never gets asked.",
     guideStepPeopleTitle:
       "If there's a people-type property (Programmer/Reviewer, etc), fill in the \"Known people\" table in NOTION_TASK_SCHEMA.md — do NOT use GET /v1/users, it only returns identities already connected to the integration (usually just the workspace owner + its own bot), not the whole workspace membership:",
-    guideStepPeopleCode: `# 1) query the database, page_size 100, paginate via has_more + next_cursor
-curl -s -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
-  -H "Authorization: Bearer $NOTION_API_KEY" \\
+    guideStepPeopleCode: `# token lives in .claude/notion.curlrc (gitignored), NOT an env var — a
+# command using $NOTION_API_KEY hits a permission prompt every time even if
+# its prefix is already allow-listed, because variable expansion in Bash
+# always requires separate approval. That file is one line:
+#   header = "Authorization: Bearer <raw-token>"
+#
+# 1) query the database, page_size 100, paginate via has_more + next_cursor
+curl -s -K .claude/notion.curlrc -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
   -H "Notion-Version: 2022-06-28" \\
   -H "Content-Type: application/json" \\
   -d '{"page_size": 100}'
@@ -407,16 +464,16 @@ curl -s -X POST "https://api.notion.com/v1/databases/<database_id>/query" \\
     guideStepPeopleNote:
       "Never guess or hardcode a person-id. Write the final result into NOTION_TASK_SCHEMA.md in the exact Name | Person ID | Email table format — full example at ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md, \"Known people\" section.",
     guideStepSettingsTitle:
-      "If this project's agent runs directly via Claude Code (not through this orchestrator app) and queries Notion using Bash + curl + $NOTION_API_KEY itself (instead of the app's built-in query_database tool), add .claude/settings.json so query calls don't hit a permission prompt every time. Scope the rule as narrowly as possible — curl to that specific database ID, not curl in general:",
+      "If this project's agent runs directly via Claude Code (not through this orchestrator app) and queries Notion using Bash + curl itself (instead of the app's built-in query_database tool), create .claude/notion.curlrc (gitignored, one-line Authorization header — see example above) then add .claude/settings.json so query calls don't hit a permission prompt every time. The command MUST use -K .claude/notion.curlrc — do NOT pass the token via -H \"Authorization: Bearer $NOTION_API_KEY\", since any command with variable expansion ($VAR / $(...)) still requires manual approval even once its prefix is allow-listed. Scope the rule as narrowly as possible — curl to that specific database ID, not curl in general:",
     guideStepSettingsCode: `{
   "permissions": {
     "allow": [
-      "Bash(curl -s https://api.notion.com/v1/databases/<database_id>*)"
+      "Bash(curl -s -K .claude/notion.curlrc -X POST https://api.notion.com/v1/databases/<database_id>*)"
     ]
   }
 }`,
     guideStepSettingsNote:
-      "Commit this file (settings.json, not settings.local.json) so the permission applies to everyone running this agent, not just you.",
+      "Commit settings.json (not settings.local.json) so the permission applies to everyone running this agent. Also commit a .gitignore entry excluding .claude/notion.curlrc — it holds the raw token, never let it get committed.",
     guideStep3: [
       'Easiest: use the "AI setup prompt" tab — copy it, paste into Claude Code (or another agent) running in your new project\'s folder. It will interview you briefly then generate all files above.',
     ],
@@ -456,9 +513,11 @@ Requirements per file:
    - If there's a NOTION_TASK_SCHEMA.md: it must include the Database ID, workspace, and a full table of all Notion Properties (name, type, options/select values) — the agent reads this to build "properties" in real Notion API shape (e.g. {"Name": {"title": [...]}}).
    - Also add a "## Required fields (task creation)" section — a \`Property | Rule\` table listing properties that MUST be set on every new task. For rows whose value must be asked from the user (not auto/default/hardcoded), spell the rule out clearly (e.g. "assignee — ask if not given", "only if user gives one explicit — no invent"). This is what makes the app show an interactive picker (buttons / date-picker) in chat when that property is still missing — see the full example at ~/qc_apps/.claude/docs/NOTION_TASK_SCHEMA.md.
 
-4. .claude/settings.json (only if this project's agent is also run directly via Claude Code, not only through the orchestrator app, and it queries Notion using Bash + curl + $NOTION_API_KEY)
-   - Add a permissions.allow rule scoped as narrowly as possible to curl against that one database ID, e.g.: {"permissions":{"allow":["Bash(curl -s https://api.notion.com/v1/databases/<database_id>*)"]}}
-   - Commit this file (not settings.local.json) so the permission applies for everyone, not just you.
+4. .claude/settings.json + .claude/notion.curlrc (only if this project's agent is also run directly via Claude Code, not only through the orchestrator app, and it queries Notion using Bash + curl)
+   - Put the token in .claude/notion.curlrc (gitignored), one line: header = "Authorization: Bearer <raw-token>". Do NOT inline $NOTION_API_KEY in the curl command — a command with variable expansion still needs manual approval even once its prefix is allow-listed.
+   - The curl command MUST use -K .claude/notion.curlrc, not -H "Authorization: ...".
+   - Add a permissions.allow rule scoped as narrowly as possible, e.g.: {"permissions":{"allow":["Bash(curl -s -K .claude/notion.curlrc -X POST https://api.notion.com/v1/databases/<database_id>*)"]}}
+   - Commit settings.json (not settings.local.json) so the permission applies for everyone, not just you. Make sure .claude/notion.curlrc is in .gitignore.
 
 5. "Known people" table (Programmer/Reviewer) in NOTION_TASK_SCHEMA.md — only if there's a people-type property
    - Do NOT use GET /v1/users to resolve names to person-ids. The integration token can only see identities already connected to that integration (usually just the workspace owner + its own bot), not the whole workspace membership.

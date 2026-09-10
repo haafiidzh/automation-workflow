@@ -38,6 +38,8 @@ export function appendSessionTurn(params: {
   if (fs.existsSync(filePath)) {
     record = JSON.parse(fs.readFileSync(filePath, "utf-8")) as SessionRecord;
     record.turns.push(params.userTurn, params.assistantTurn);
+    record.agentName = params.agentName;
+    record.notionAccountId = params.notionAccountId;
   } else {
     record = {
       sessionId: params.sessionId,

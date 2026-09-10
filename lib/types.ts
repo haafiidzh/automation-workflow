@@ -43,12 +43,21 @@ export type ProjectScanResponse = {
 
 export type SessionToolCall = { name: string; input: Record<string, unknown> };
 
+export type AttachmentMeta = {
+  fileId: string;
+  name: string;
+  mime: string;
+  kind: "image" | "pdf" | "excel";
+  size: number;
+};
+
 export type SessionTurn = {
   role: "user" | "assistant";
   text: string;
   toolCalls?: SessionToolCall[];
   timestamp: string;
   notionStatuses?: NotionCreateStatus[];
+  attachments?: AttachmentMeta[];
 };
 
 export type SessionRecord = {
@@ -66,3 +75,11 @@ export type SessionRecord = {
 export type SessionSummary = Omit<SessionRecord, "turns"> & {
   preview: string;
 };
+
+export type Disturbance =
+  | { type: "note"; text: string }
+  | { type: "doc"; fileName: string };
+
+export type ResolvedDisturbance =
+  | { type: "note"; text: string }
+  | { type: "doc"; fileName: string; content: string };

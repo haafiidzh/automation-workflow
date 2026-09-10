@@ -5,6 +5,7 @@ export type { NotionTicket } from "./notion-ticket";
 export { parseNotionTickets, stripNotionTicketBlock } from "./notion-ticket";
 
 const NOTION_API_VERSION = "2022-06-28";
+const NOTION_REQUEST_TIMEOUT_MS = 20_000;
 
 /**
  * Read-only query against a Notion database, exposed to the agent as a
@@ -51,19 +52,28 @@ export async function createNotionPage(
 ): Promise<{ url: string }> {
   const children = markdownToBlocks(ticket.content_markdown);
 
-  const res = await fetch("https://api.notion.com/v1/pages", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Notion-Version": NOTION_API_VERSION,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      parent: { database_id: ticket.database_id },
-      properties: ticket.properties,
-      children,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch("https://api.notion.com/v1/pages", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Notion-Version": NOTION_API_VERSION,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        parent: { database_id: ticket.database_id },
+        properties: ticket.properties,
+        children,
+      }),
+      signal: AbortSignal.timeout(NOTION_REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`Notion API tidak merespons dalam ${NOTION_REQUEST_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  }
 
   const data = await res.json();
   if (!res.ok) {

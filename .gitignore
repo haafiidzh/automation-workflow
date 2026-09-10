@@ -51,4 +51,7 @@ next-env.d.ts
 /workflow/briefs/*
 !/workflow/briefs/.gitkeep
 
+# chat attachment uploads (local storage driver)
+/workflow/uploads/
+
 .claude/*

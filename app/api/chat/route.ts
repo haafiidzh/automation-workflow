@@ -1,10 +1,12 @@
 import fs from "fs";
+import path from "path";
 import { NextRequest } from "next/server";
 import { getProjectById, getNotionAccounts, isWithinAllowedRoot } from "@/lib/registry";
 import { scanProject } from "@/lib/claude-dir";
-import { runAgentSession } from "@/lib/agent";
+import { runAgentSession, type AttachmentInput } from "@/lib/agent";
 import { appendSessionTurn } from "@/lib/sessions";
-import type { SessionToolCall } from "@/lib/types";
+import { getStorageDriver } from "@/lib/storage";
+import type { AttachmentMeta, Disturbance, ResolvedDisturbance, SessionToolCall } from "@/lib/types";
 
 type ChatRequestBody = {
   projectId: string;
@@ -12,6 +14,10 @@ type ChatRequestBody = {
   notionAccountId: string;
   message: string;
   sessionId?: string;
+  /** Client-generated key attachments were uploaded under before a real (SDK) sessionId existed. */
+  uploadSessionId?: string;
+  attachments?: AttachmentMeta[];
+  disturbances?: Disturbance[];
 };
 
 function sseLine(event: string, data: unknown): string {
@@ -20,7 +26,8 @@ function sseLine(event: string, data: unknown): string {
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as ChatRequestBody;
-  const { projectId, agentName, notionAccountId, message, sessionId } = body;
+  const { projectId, agentName, notionAccountId, message, sessionId, uploadSessionId, attachments, disturbances } =
+    body;
 
   if (!projectId || !agentName || !notionAccountId || !message) {
     return new Response(
@@ -69,12 +76,62 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Attachments were uploaded keyed by the SDK sessionId once it exists, or by
+  // a client-generated draft id for a brand-new chat (before the SDK has
+  // assigned one). Either way, that's the storage key we read them back from.
+  const storageSessionKey = sessionId ?? uploadSessionId;
+  const storage = getStorageDriver();
+
   const stream = new ReadableStream({
     async start(controller) {
       const enc = new TextEncoder();
       const turnStartedAt = new Date().toISOString();
       let assistantText = "";
       const toolCalls: SessionToolCall[] = [];
+
+      let attachmentInputs: AttachmentInput[] | undefined;
+      if (attachments?.length) {
+        if (!storageSessionKey) {
+          controller.enqueue(
+            enc.encode(sseLine("error", { message: "uploadSessionId wajib diisi kalau ada attachments" }))
+          );
+          controller.close();
+          return;
+        }
+        try {
+          attachmentInputs = await Promise.all(
+            attachments.map(async (att) => ({
+              ...att,
+              data: await storage.read(storageSessionKey, att.fileId),
+            }))
+          );
+        } catch (err) {
+          controller.enqueue(
+            enc.encode(
+              sseLine("error", {
+                message: `Gagal membaca lampiran: ${err instanceof Error ? err.message : String(err)}`,
+              })
+            )
+          );
+          controller.close();
+          return;
+        }
+      }
+
+      let resolvedDisturbances: ResolvedDisturbance[] | undefined;
+      if (disturbances?.length) {
+        resolvedDisturbances = disturbances.map((d) => {
+          if (d.type === "note") return d;
+          const docPath = path.join(project.path, ".claude", "docs", d.fileName);
+          try {
+            const content = fs.readFileSync(docPath, "utf-8");
+            return { type: "doc" as const, fileName: d.fileName, content };
+          } catch {
+            return { type: "note" as const, text: `[doc not found: ${d.fileName}]` };
+          }
+        });
+      }
+
       try {
         for await (const evt of runAgentSession({
           projectPath: project.path,
@@ -83,19 +140,34 @@ export async function POST(req: NextRequest) {
           message,
           resumeSessionId: sessionId,
           notionToken: process.env[notionAccount.env],
+          attachments: attachmentInputs,
+          disturbances: resolvedDisturbances,
         })) {
           if (evt.type === "text_delta") {
             assistantText += evt.text;
           } else if (evt.type === "tool_call") {
             toolCalls.push({ name: evt.name, input: evt.input });
           } else if (evt.type === "result") {
+            // Keep storage keyed by the real session id from here on.
+            if (storageSessionKey && storageSessionKey !== evt.sessionId) {
+              try {
+                await storage.renameSession(storageSessionKey, evt.sessionId);
+              } catch (renameErr) {
+                console.error("Failed to move attachment storage to session id:", renameErr);
+              }
+            }
             try {
               appendSessionTurn({
                 sessionId: evt.sessionId,
                 projectId,
                 agentName,
                 notionAccountId,
-                userTurn: { role: "user", text: message, timestamp: turnStartedAt },
+                userTurn: {
+                  role: "user",
+                  text: message,
+                  timestamp: turnStartedAt,
+                  attachments: attachments?.length ? attachments : undefined,
+                },
                 assistantTurn: {
                   role: "assistant",
                   text: evt.finalText || assistantText,

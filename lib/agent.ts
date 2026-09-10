@@ -1,7 +1,10 @@
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { readRulesContent } from "./claude-dir";
 import { queryNotionDatabase } from "./notion";
+import { parseExcelToText } from "./excel-parse";
+import type { AttachmentMeta, ResolvedDisturbance } from "./types";
 
 export type AgentEvent =
   | { type: "text_delta"; text: string }
@@ -15,6 +18,8 @@ export type AgentEvent =
     }
   | { type: "error"; message: string };
 
+export type AttachmentInput = AttachmentMeta & { data: Buffer };
+
 type RunSessionParams = {
   projectPath: string;
   agentName: string;
@@ -22,7 +27,87 @@ type RunSessionParams = {
   message: string;
   resumeSessionId?: string;
   notionToken?: string;
+  attachments?: AttachmentInput[];
+  disturbances?: ResolvedDisturbance[];
 };
+
+const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+/**
+ * Builds a text prefix from resolved disturbances (notes + doc contents)
+ * that gets prepended to the user message.
+ */
+function buildDisturbancePrefix(disturbances: ResolvedDisturbance[]): string {
+  const notes = disturbances.filter((d) => d.type === "note");
+  const docs = disturbances.filter((d) => d.type === "doc");
+
+  if (notes.length === 0 && docs.length === 0) return "";
+
+  const parts: string[] = ["## Additional context (disturb)\n"];
+
+  if (notes.length > 0) {
+    parts.push("### Notes");
+    for (const n of notes) {
+      parts.push(`- ${n.text}`);
+    }
+    parts.push("");
+  }
+
+  if (docs.length > 0) {
+    for (const d of docs) {
+      parts.push(`### Doc: ${d.fileName}\n${d.content}`);
+    }
+    parts.push("");
+  }
+
+  return parts.join("\n");
+}
+
+/**
+ * Builds the SDK prompt for one turn. Plain string when there are no
+ * attachments (keeps the common path simple); an async-iterable of one
+ * SDKUserMessage with content blocks when there are — images and PDFs go in
+ * natively, Excel gets flattened to text first (SDK has no xlsx block type).
+ */
+async function buildPrompt(
+  message: string,
+  attachments: AttachmentInput[] | undefined,
+  disturbancePrefix: string
+): Promise<string | AsyncIterable<SDKUserMessage>> {
+  const fullMessage = disturbancePrefix ? `${disturbancePrefix}\n---\n\n${message}` : message;
+  if (!attachments || attachments.length === 0) return fullMessage;
+
+  const blocks: Array<Record<string, unknown>> = [];
+
+  for (const att of attachments) {
+    if (att.kind === "image" && IMAGE_MEDIA_TYPES.has(att.mime)) {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: att.mime, data: att.data.toString("base64") },
+      });
+    } else if (att.kind === "pdf") {
+      blocks.push({
+        type: "document",
+        source: { type: "base64", media_type: "application/pdf", data: att.data.toString("base64") },
+      });
+    } else if (att.kind === "excel") {
+      const text = await parseExcelToText(att.data);
+      blocks.push({ type: "text", text: `## Lampiran Excel: ${att.name}\n\n${text}` });
+    }
+  }
+
+  blocks.push({ type: "text", text: fullMessage });
+
+  const sdkMessage: SDKUserMessage = {
+    type: "user",
+    message: { role: "user", content: blocks as never },
+    parent_tool_use_id: null,
+  };
+
+  return (async function* () {
+    yield sdkMessage;
+  })();
+}
 
 function buildSystemPromptAppend(docsFiles: string[], projectPath: string): string {
   const rules = readRulesContent(projectPath);
@@ -142,8 +227,12 @@ export async function* runAgentSession({
   message,
   resumeSessionId,
   notionToken,
+  attachments,
+  disturbances,
 }: RunSessionParams): AsyncGenerator<AgentEvent> {
   const append = buildSystemPromptAppend(docsFiles, projectPath);
+  const disturbancePrefix = disturbances?.length ? buildDisturbancePrefix(disturbances) : "";
+  const prompt = await buildPrompt(message, attachments, disturbancePrefix);
 
   const allowedTools = ["Read", "Glob", "Grep"];
   const mcpServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
@@ -179,7 +268,7 @@ export async function* runAgentSession({
   }
 
   const q = query({
-    prompt: message,
+    prompt,
     options: {
       cwd: projectPath,
       agent: agentName,

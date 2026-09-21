@@ -21,8 +21,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogClose, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
+import { AttachmentTile } from "@/components/attachment-tile";
 import { useLocale } from "@/lib/i18n/context";
-import type { NotionCreateStatus } from "@/lib/types";
+import type { AttachmentMeta, NotionCreateStatus } from "@/lib/types";
 import {
   extractLeadingHeading,
   extractNotionTitle,
@@ -118,11 +119,13 @@ function PropertyRow({
 
 function TicketBody({
   ticket,
+  attachments,
   title,
   emptyLabel,
   locale,
 }: {
   ticket: NotionTicket;
+  attachments?: (AttachmentMeta & { previewUrl?: string })[];
   title: string;
   emptyLabel: string;
   locale: string;
@@ -144,6 +147,13 @@ function TicketBody({
           <PropertyRow key={p.name} prop={p} emptyLabel={emptyLabel} locale={locale} />
         ))}
       </div>
+      {attachments && attachments.length > 0 && (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(4rem,4rem))] gap-2 border-t pt-3">
+          {attachments.map((att) => (
+            <AttachmentTile key={att.fileId} att={att} />
+          ))}
+        </div>
+      )}
       {bodyMarkdown && (
         <div className="border-t pt-3">
           <Markdown text={bodyMarkdown} />
@@ -155,6 +165,7 @@ function TicketBody({
 
 export function NotionTicketPreviewModal({
   tickets,
+  attachments,
   statuses,
   open,
   onOpenChange,
@@ -171,6 +182,7 @@ export function NotionTicketPreviewModal({
   retryLabel,
 }: {
   tickets: NotionTicket[];
+  attachments?: (AttachmentMeta & { previewUrl?: string })[];
   statuses?: NotionCreateStatus[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -251,7 +263,15 @@ export function NotionTicketPreviewModal({
 
         <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           <div className="flex min-w-0 flex-col gap-3 px-4 pb-4 pt-3">
-            {ticket && <TicketBody ticket={ticket} title={title} emptyLabel={emptyLabel} locale={locale} />}
+            {ticket && (
+              <TicketBody
+                ticket={ticket}
+                attachments={attachments}
+                title={title}
+                emptyLabel={emptyLabel}
+                locale={locale}
+              />
+            )}
           </div>
         </div>
 

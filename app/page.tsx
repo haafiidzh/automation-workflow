@@ -6,9 +6,6 @@ import {
   ArrowUp,
   ChevronLeft,
   ChevronRight,
-  FileSpreadsheet,
-  FileText,
-  Image as ImageIcon,
   Moon,
   Paperclip,
   Plus,
@@ -31,6 +28,7 @@ import { OnboardingModal } from "@/components/onboarding-modal";
 import { NotionTicketPreviewModal } from "@/components/notion-ticket-preview";
 import { MissingFieldsPrompt } from "@/components/missing-fields-prompt";
 import { SessionSidebar } from "@/components/session-sidebar";
+import { AttachmentTile } from "@/components/attachment-tile";
 import {
   parseNotionTickets,
   parseNeedsInput,
@@ -59,25 +57,23 @@ const ACCEPTED_FILE_TYPES =
 
 type ToolCall = { name: string; input: Record<string, unknown> };
 
-type PendingAttachment = AttachmentMeta & { status: "uploading" | "done" | "error"; error?: string };
+type PendingAttachment = AttachmentMeta & {
+  status: "uploading" | "done" | "error";
+  error?: string;
+  previewUrl?: string;
+};
 
 type ChatMessage = {
   role: "user" | "assistant";
   text: string;
   toolCalls?: ToolCall[];
-  attachments?: AttachmentMeta[];
+  attachments?: (AttachmentMeta & { previewUrl?: string })[];
   notionTickets?: NotionTicket[];
   notionStatuses?: NotionCreateStatus[];
   activeTicketIndex?: number;
   needsInput?: NotionNeedsInput;
   needsInputResolved?: boolean;
 };
-
-function attachmentIcon(kind: AttachmentMeta["kind"]) {
-  if (kind === "image") return ImageIcon;
-  if (kind === "excel") return FileSpreadsheet;
-  return FileText;
-}
 
 function describeToolCall(t: ToolCall): string {
   const target = (t.input.file_path as string) || (t.input.pattern as string) || "";
@@ -101,7 +97,15 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [sessionId, setSessionId] = useState<string | undefined>(undefined);
   const [sending, setSending] = useState(false);
-  const [chatError, setChatError] = useState<string | null>(null);
+  type ChatErrorState = { kind: "raw"; message: string } | { kind: "attachTooBig" } | { kind: "sessionError" };
+  const [chatError, setChatError] = useState<ChatErrorState | null>(null);
+  const chatErrorText = chatError
+    ? chatError.kind === "attachTooBig"
+      ? t.composer.attachTooBig(MAX_UPLOAD_MB)
+      : chatError.kind === "sessionError"
+        ? t.errors.sessionError
+        : chatError.message
+    : null;
   const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
   const [uploadDraftId, setUploadDraftId] = useState<string>(() => crypto.randomUUID());
@@ -198,7 +202,10 @@ export default function Home() {
     setSessionId(undefined);
     setChatError(null);
     setInput("");
-    setPendingAttachments([]);
+    setPendingAttachments((a) => {
+      a.forEach((p) => p.previewUrl && URL.revokeObjectURL(p.previewUrl));
+      return [];
+    });
     setUploadDraftId(crypto.randomUUID());
     setDisturbances([]);
     setDisturbMode(null);
@@ -208,10 +215,11 @@ export default function Home() {
   const handleFileSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const targetSessionId = sessionId ?? uploadDraftId;
+    setChatError(null);
 
     for (const file of Array.from(files)) {
       if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
-        setChatError(t.composer.attachTooBig(MAX_UPLOAD_MB));
+        setChatError({ kind: "attachTooBig" });
         continue;
       }
 
@@ -221,6 +229,7 @@ export default function Home() {
         : file.type === "application/pdf"
           ? "pdf"
           : "excel";
+      const previewUrl = guessedKind === "image" ? URL.createObjectURL(file) : undefined;
       setPendingAttachments((a) => [
         ...a,
         {
@@ -230,6 +239,7 @@ export default function Home() {
           kind: guessedKind,
           size: file.size,
           status: "uploading",
+          previewUrl,
         },
       ]);
 
@@ -242,7 +252,7 @@ export default function Home() {
         if (!res.ok) throw new Error(data.error ?? t.errors.uploadFailed);
         const meta = data as AttachmentMeta;
         setPendingAttachments((a) =>
-          a.map((p) => (p.fileId === placeholderId ? { ...meta, status: "done" } : p))
+          a.map((p) => (p.fileId === placeholderId ? { ...meta, status: "done", previewUrl: p.previewUrl } : p))
         );
       } catch (err) {
         setPendingAttachments((a) =>
@@ -257,7 +267,11 @@ export default function Home() {
   };
 
   const removePendingAttachment = (fileId: string) => {
-    setPendingAttachments((a) => a.filter((p) => p.fileId !== fileId));
+    setPendingAttachments((a) => {
+      const target = a.find((p) => p.fileId === fileId);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+      return a.filter((p) => p.fileId !== fileId);
+    });
   };
 
   const handleSelectSession = async (id: string) => {
@@ -306,7 +320,7 @@ export default function Home() {
       setChatError(null);
       setInput("");
     } catch (err) {
-      setChatError(err instanceof Error ? err.message : String(err));
+      setChatError({ kind: "raw", message: err instanceof Error ? err.message : String(err) });
     }
   };
 
@@ -314,9 +328,9 @@ export default function Home() {
     const userText = (overrideText ?? input).trim();
     if (!userText || !readyToChat || sending) return;
     if (pendingAttachments.some((a) => a.status === "uploading")) return;
-    const readyAttachments: AttachmentMeta[] = pendingAttachments
+    const readyAttachments: (AttachmentMeta & { previewUrl?: string })[] = pendingAttachments
       .filter((a) => a.status === "done")
-      .map(({ fileId, name, mime, kind, size }) => ({ fileId, name, mime, kind, size }));
+      .map(({ fileId, name, mime, kind, size, previewUrl }) => ({ fileId, name, mime, kind, size, previewUrl }));
     if (overrideText === undefined) setInput("");
     setChatError(null);
     stickToBottomRef.current = true;
@@ -388,7 +402,7 @@ export default function Home() {
             setSessionId(payload.sessionId);
             setSessionsRefreshKey((k) => k + 1);
             if (payload.isError) {
-              setChatError(t.errors.sessionError);
+              setChatError({ kind: "sessionError" });
             }
             const tickets = parseNotionTickets(payload.finalText ?? "");
             if (tickets) {
@@ -420,12 +434,12 @@ export default function Home() {
               }
             }
           } else if (payload.type === "error") {
-            setChatError(payload.message);
+            setChatError({ kind: "raw", message: payload.message });
           }
         }
       }
     } catch (err) {
-      setChatError(err instanceof Error ? err.message : String(err));
+      setChatError({ kind: "raw", message: err instanceof Error ? err.message : String(err) });
     } finally {
       setSending(false);
     }
@@ -479,16 +493,28 @@ export default function Home() {
     setDisturbances((d) => d.filter((_, i) => i !== index));
   };
 
+  const ticketAttachments = (index: number) =>
+    messages
+      .slice(0, index + 1)
+      .filter((m) => m.role === "user")
+      .flatMap((m) => m.attachments ?? []);
+
   const createNotionTicket = async (index: number, ticketIndex: number) => {
     const ticket = messages[index]?.notionTickets?.[ticketIndex];
     if (!ticket) return;
+    const attachments = ticketAttachments(index);
     setMessageNotionStatus(index, ticketIndex, { state: "creating" });
     try {
       const res = await fetch("/api/notion/create-ticket", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ notionAccountId: selectedNotion, ticket }),
-        signal: AbortSignal.timeout(25_000),
+        body: JSON.stringify({
+          notionAccountId: selectedNotion,
+          ticket,
+          sessionId,
+          attachments: attachments.length ? attachments : undefined,
+        }),
+        signal: AbortSignal.timeout(45_000),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? t.errors.notionCreate);
@@ -573,18 +599,10 @@ export default function Home() {
                   </div>
                 ))}
                 {m.attachments && m.attachments.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-1.5">
-                    {m.attachments.map((att) => {
-                      const Icon = attachmentIcon(att.kind);
-                      return (
-                        <span
-                          key={att.fileId}
-                          className="inline-flex items-center gap-1 rounded-full bg-background/60 border px-2 py-0.5 text-xs"
-                        >
-                          <Icon className="size-3" /> {att.name}
-                        </span>
-                      );
-                    })}
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(4rem,4rem))] gap-2 mb-1.5">
+                    {m.attachments.map((att) => (
+                      <AttachmentTile key={att.fileId} att={att} />
+                    ))}
                   </div>
                 )}
                 {m.role === "assistant" ? (
@@ -609,6 +627,7 @@ export default function Home() {
                 {m.notionTickets && (
                   <NotionTicketCard
                     message={m}
+                    attachments={ticketAttachments(i)}
                     onCreate={(ticketIndex) => createNotionTicket(i, ticketIndex)}
                     onNavigate={(ticketIndex) => setActiveTicketIndex(i, ticketIndex)}
                     t={t}
@@ -623,7 +642,6 @@ export default function Home() {
               </div>
             </div>
           ))}
-          {chatError && <p className="text-destructive text-sm">{chatError}</p>}
           <div ref={messagesEndRef} />
         </div>
       </main>
@@ -633,7 +651,13 @@ export default function Home() {
         {configError && (
           <p className="max-w-3xl mx-auto text-destructive text-xs mb-2">{configError}</p>
         )}
-        <div className="max-w-3xl mx-auto rounded-3xl border bg-card shadow-sm px-3 pt-3 pb-2 flex flex-col gap-2">
+        <div className="max-w-3xl mx-auto flex flex-col">
+        {chatErrorText && (
+          <div className="mx-4 border border-destructive/40 border-b-0 bg-destructive/10 text-destructive text-sm px-4 py-2 rounded-t-3xl break-words">
+            {chatErrorText}
+          </div>
+        )}
+        <div className="rounded-3xl border bg-card shadow-sm px-3 pt-3 pb-2 flex flex-col gap-2">
           {/* Dropdown row — the ChatGPT-diff: project/notion/agent pickers instead of tool pickers */}
           <div className="flex flex-wrap items-center gap-2 px-1">
             <Select
@@ -712,35 +736,14 @@ export default function Home() {
           )}
 
           {pendingAttachments.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-1">
-              {pendingAttachments.map((att) => {
-                const Icon = attachmentIcon(att.kind);
-                return (
-                  <span
-                    key={att.fileId}
-                    className={
-                      "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs " +
-                      (att.status === "error" ? "border-destructive text-destructive" : "text-muted-foreground")
-                    }
-                    title={att.status === "error" ? att.error : att.name}
-                  >
-                    {att.status === "uploading" ? (
-                      <span className="size-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
-                    ) : (
-                      <Icon className="size-3" />
-                    )}
-                    {att.name}
-                    <button
-                      type="button"
-                      onClick={() => removePendingAttachment(att.fileId)}
-                      title={t.composer.attachRemove}
-                      className="hover:text-foreground"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </span>
-                );
-              })}
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(4rem,4rem))] gap-2 px-1">
+              {pendingAttachments.map((att) => (
+                <AttachmentTile
+                  key={att.fileId}
+                  att={att}
+                  onRemove={() => removePendingAttachment(att.fileId)}
+                />
+              ))}
             </div>
           )}
 
@@ -766,7 +769,33 @@ export default function Home() {
           )}
 
           {disturbMode && (
-            <div className="px-1">
+            <div className="px-1 flex flex-col gap-1.5 rounded-xl border border-primary/20 bg-primary/5 p-2">
+              <div className="flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => setDisturbMode("note")}
+                  className={
+                    "text-xs rounded-full border px-2 py-0.5 whitespace-nowrap transition-colors " +
+                    (disturbMode === "note"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-muted text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  {t.disturb.addNote}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDisturbMode("doc")}
+                  className={
+                    "text-xs rounded-full border px-2 py-0.5 whitespace-nowrap transition-colors " +
+                    (disturbMode === "doc"
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-muted text-muted-foreground hover:text-foreground")
+                  }
+                >
+                  {t.disturb.addDoc}
+                </button>
+              </div>
               {disturbMode === "note" ? (
                 <div className="flex items-center gap-2">
                   <input
@@ -856,46 +885,16 @@ export default function Home() {
             >
               <Paperclip />
             </Button>
-            <div className="relative">
-              <Button
-                variant="ghost"
-                size="icon"
-                className="rounded-full mb-1"
-                disabled={!readyToChat || sending}
-                onClick={() => setDisturbMode(disturbMode ? null : "note")}
-                title={t.disturb.button}
-              >
-                <Plus />
-              </Button>
-              {disturbMode && (
-                <div className="absolute bottom-full left-0 mb-1 flex gap-1 z-10">
-                  <button
-                    type="button"
-                    onClick={() => setDisturbMode("note")}
-                    className={
-                      "text-xs rounded-full border px-2 py-0.5 whitespace-nowrap transition-colors " +
-                      (disturbMode === "note"
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-muted text-muted-foreground hover:text-foreground")
-                    }
-                  >
-                    {t.disturb.addNote}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDisturbMode("doc")}
-                    className={
-                      "text-xs rounded-full border px-2 py-0.5 whitespace-nowrap transition-colors " +
-                      (disturbMode === "doc"
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-muted text-muted-foreground hover:text-foreground")
-                    }
-                  >
-                    {t.disturb.addDoc}
-                  </button>
-                </div>
-              )}
-            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="rounded-full mb-1"
+              disabled={!readyToChat || sending}
+              onClick={() => setDisturbMode(disturbMode ? null : "note")}
+              title={t.disturb.button}
+            >
+              <Plus />
+            </Button>
             <Textarea
               className="flex-1 resize-none border-none shadow-none bg-transparent focus-visible:ring-0 text-[15px] px-1 py-1.5 max-h-[200px] min-h-0 field-sizing-content"
               placeholder={readyToChat ? t.composer.inputPlaceholder : t.composer.inputPlaceholderNotReady}
@@ -925,6 +924,7 @@ export default function Home() {
             </Button>
           </div>
         </div>
+        </div>
       </div>
       </div>
     </div>
@@ -933,11 +933,13 @@ export default function Home() {
 
 function NotionTicketCard({
   message,
+  attachments,
   onCreate,
   onNavigate,
   t,
 }: {
   message: ChatMessage;
+  attachments?: (AttachmentMeta & { previewUrl?: string })[];
   onCreate: (ticketIndex: number) => void;
   onNavigate: (ticketIndex: number) => void;
   t: ReturnType<typeof useLocale>["t"];
@@ -1015,6 +1017,7 @@ function NotionTicketCard({
       {tickets.length > 0 && (
         <NotionTicketPreviewModal
           tickets={tickets}
+          attachments={attachments}
           statuses={message.notionStatuses}
           initialIndex={activeIndex}
           open={previewOpen}

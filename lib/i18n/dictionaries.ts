@@ -82,6 +82,32 @@ type Dictionary = {
     selectProject: string;
     loadError: string;
   };
+  localAgent: {
+    title: string;
+    connect: string;
+    statusChecking: string;
+    statusConnected: (roots: number) => string;
+    statusUnpaired: string;
+    statusDisconnected: string;
+    dialogTitle: string;
+    intro: string;
+    step1Title: string;
+    step1Body: string;
+    step2Title: string;
+    step2Body: string;
+    step3Title: string;
+    step3Body: string;
+    tokenLabel: string;
+    tokenPlaceholder: string;
+    pair: string;
+    disconnect: string;
+    recheck: string;
+    errorNotRunning: string;
+    errorPortConflict: string;
+    errorInvalidToken: string;
+    downloadLink: string;
+    close: string;
+  };
   onboarding: {
     triggerTitle: string;
     dialogTitle: string;
@@ -192,6 +218,36 @@ const id: Dictionary = {
     empty: "Belum ada sesi tersimpan",
     selectProject: "Pilih project dulu",
     loadError: "Gagal memuat daftar sesi",
+  },
+  localAgent: {
+    title: "Akses folder lokal",
+    connect: "Sambungkan akses folder lokal",
+    statusChecking: "Mengecek local agent…",
+    statusConnected: (roots: number) => `Local agent tersambung (${roots} folder diizinkan)`,
+    statusUnpaired: "Local agent jalan, tapi belum dipasangkan (token belum diisi)",
+    statusDisconnected: "Local agent tidak terdeteksi",
+    dialogTitle: "Sambungkan akses folder lokal",
+    intro:
+      "Agent jalan di server, jadi tidak bisa baca file di komputer kamu. Install local agent untuk memberi akses baca ke folder yang kamu pilih sendiri.",
+    step1Title: "1. Download & jalankan local agent",
+    step1Body: "Download binary Linux, lalu jalankan: orchestrator-agent run",
+    step2Title: "2. Izinkan folder yang boleh dibaca",
+    step2Body:
+      "Jalankan: orchestrator-agent allow /path/ke/project, dan orchestrator-agent allow-origin <origin Orchestrator ini>",
+    step3Title: "3. Tempel token pemasangan",
+    step3Body: "Ambil token dengan: orchestrator-agent token",
+    tokenLabel: "Token pemasangan",
+    tokenPlaceholder: "Tempel token dari orchestrator-agent token",
+    pair: "Pasangkan",
+    disconnect: "Putuskan",
+    recheck: "Cek ulang",
+    errorNotRunning:
+      "Local agent tidak jalan di komputer ini. Jalankan orchestrator-agent run lalu cek ulang.",
+    errorPortConflict:
+      "Port 47821-47830 terpakai semua. Tutup aplikasi yang memakai port itu lalu jalankan ulang local agent.",
+    errorInvalidToken: "Token ditolak local agent. Ambil token terbaru dengan orchestrator-agent token.",
+    downloadLink: "Petunjuk download & instalasi",
+    close: "Tutup",
   },
   onboarding: {
     triggerTitle: "Cara daftarkan project baru",
@@ -404,6 +460,35 @@ const en: Dictionary = {
     empty: "No saved sessions yet",
     selectProject: "Pick a project first",
     loadError: "Failed to load session list",
+  },
+  localAgent: {
+    title: "Local folder access",
+    connect: "Connect local folder access",
+    statusChecking: "Checking local agent…",
+    statusConnected: (roots: number) => `Local agent connected (${roots} folder(s) allowed)`,
+    statusUnpaired: "Local agent is running but not paired yet (token missing)",
+    statusDisconnected: "No local agent detected",
+    dialogTitle: "Connect local folder access",
+    intro:
+      "The agent runs on the server, so it cannot read files on your machine. Install the local agent to grant read access to folders you pick yourself.",
+    step1Title: "1. Download & run the local agent",
+    step1Body: "Download the Linux binary, then run: orchestrator-agent run",
+    step2Title: "2. Allow the folders it may read",
+    step2Body:
+      "Run: orchestrator-agent allow /path/to/project, and orchestrator-agent allow-origin <this Orchestrator origin>",
+    step3Title: "3. Paste the pairing token",
+    step3Body: "Get the token with: orchestrator-agent token",
+    tokenLabel: "Pairing token",
+    tokenPlaceholder: "Paste the token from orchestrator-agent token",
+    pair: "Pair",
+    disconnect: "Disconnect",
+    recheck: "Re-check",
+    errorNotRunning: "The local agent is not running on this machine. Run orchestrator-agent run, then re-check.",
+    errorPortConflict:
+      "Ports 47821-47830 are all taken. Close whatever uses them and restart the local agent.",
+    errorInvalidToken: "The local agent rejected this token. Get a fresh one with orchestrator-agent token.",
+    downloadLink: "Download & install instructions",
+    close: "Close",
   },
   onboarding: {
     triggerTitle: "How to register a new project",

@@ -1,0 +1,20 @@
+# systemd *user* unit — starts the agent at login, no root required.
+#
+#   mkdir -p ~/.config/systemd/user
+#   cp orchestrator-agent.service ~/.config/systemd/user/
+#   systemctl --user enable --now orchestrator-agent
+#
+[Unit]
+Description=Orchestrator local filesystem agent
+After=network.target
+
+[Service]
+ExecStart=%h/.local/bin/orchestrator-agent run
+Restart=on-failure
+RestartSec=3
+# The agent only ever binds 127.0.0.1; these keep the blast radius small.
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

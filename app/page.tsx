@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   ArrowUp,
@@ -25,6 +25,12 @@ import {
 } from "@/components/ui/select";
 import { Markdown } from "@/components/markdown";
 import { OnboardingModal } from "@/components/onboarding-modal";
+import { LocalAgentStatusButton } from "@/components/local-agent-status";
+import {
+  postLocalFsResult,
+  runLocalFsRequest,
+  type LocalAgentStatus,
+} from "@/lib/local-agent-client";
 import { NotionTicketPreviewModal } from "@/components/notion-ticket-preview";
 import { MissingFieldsPrompt } from "@/components/missing-fields-prompt";
 import { SessionSidebar } from "@/components/session-sidebar";
@@ -324,6 +330,13 @@ export default function Home() {
     }
   };
 
+  // Only send a bridge id when a paired local agent is actually reachable;
+  // otherwise the agent keeps the server-side Read/Glob/Grep tools.
+  const [localAgentReady, setLocalAgentReady] = useState(false);
+  const handleLocalAgentStatus = useCallback((status: LocalAgentStatus) => {
+    setLocalAgentReady(status.state === "connected");
+  }, []);
+
   const sendMessage = async (overrideText?: string) => {
     const userText = (overrideText ?? input).trim();
     if (!userText || !readyToChat || sending) return;
@@ -343,6 +356,8 @@ export default function Home() {
     setPendingAttachments([]);
     setSending(true);
 
+    const bridgeId = localAgentReady ? crypto.randomUUID() : undefined;
+
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -356,6 +371,7 @@ export default function Home() {
           uploadSessionId: readyAttachments.length ? uploadSessionIdForTurn : undefined,
           attachments: readyAttachments.length ? readyAttachments : undefined,
           disturbances: disturbances.length ? disturbances : undefined,
+          localFsBridgeId: bridgeId,
         }),
       });
 
@@ -433,6 +449,12 @@ export default function Home() {
                 });
               }
             }
+          } else if (payload.type === "local_fs_request" && bridgeId) {
+            // Not awaited: the stream must keep draining while the local agent
+            // works, and the tool call is resolved out-of-band by the POST.
+            void runLocalFsRequest(payload.op, payload.params).then((result) =>
+              postLocalFsResult(bridgeId, payload.requestId, result)
+            );
           } else if (payload.type === "error") {
             setChatError({ kind: "raw", message: payload.message });
           }
@@ -562,6 +584,7 @@ export default function Home() {
             </Button>
           )}
           <OnboardingModal />
+          <LocalAgentStatusButton onStatusChange={handleLocalAgentStatus} />
           <LocaleToggle />
           <ThemeToggle />
         </div>

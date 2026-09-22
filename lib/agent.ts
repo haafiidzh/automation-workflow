@@ -4,6 +4,7 @@ import { z } from "zod";
 import { readRulesContent } from "./claude-dir";
 import { queryNotionDatabase } from "./notion";
 import { parseExcelToText } from "./excel-parse";
+import { callLocalFs } from "./local-fs-bridge";
 import type { AttachmentMeta, ResolvedDisturbance } from "./types";
 
 export type AgentEvent =
@@ -29,6 +30,12 @@ type RunSessionParams = {
   notionToken?: string;
   attachments?: AttachmentInput[];
   disturbances?: ResolvedDisturbance[];
+  /**
+   * When set, filesystem reads are proxied to the local agent running on the
+   * user's machine (through the browser) instead of the native SDK tools,
+   * which would only ever see the server's own disk.
+   */
+  localFsBridgeId?: string;
 };
 
 const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -109,7 +116,11 @@ async function buildPrompt(
   })();
 }
 
-function buildSystemPromptAppend(docsFiles: string[], projectPath: string): string {
+function buildSystemPromptAppend(
+  docsFiles: string[],
+  projectPath: string,
+  localFsEnabled = false
+): string {
   const rules = readRulesContent(projectPath);
   const docsListing =
     docsFiles.length > 0
@@ -212,7 +223,26 @@ Jangan pernah tulis jawaban question/risk sebagai value properti Notion apa pun
 (termasuk properti free-text seperti Notes) — properti Notion cuma buat field
 asli sesuai NOTION_TASK_SCHEMA.md.`;
 
-  return `${rules}\n\n---\n\n${docsListing}\n\n---\n\n${notionContract}`;
+  const localFs = localFsEnabled
+    ? `## Akses file lokal user
+
+File di mesin user TIDAK bisa dibaca dengan tool Read/Glob/Grep bawaan —
+tool itu tidak tersedia di sesi ini. Pakai tool berikut, yang jalan lewat
+local agent di mesin user:
+
+- \`mcp__local_fs__read_file\` — baca satu file (butuh path absolut).
+- \`mcp__local_fs__glob\` — cari file dengan pola glob di dalam satu folder.
+- \`mcp__local_fs__grep\` — cari baris yang cocok regex di dalam satu folder.
+
+Folder yang boleh diakses dibatasi allow-list di local agent user. Kalau tool
+balas error "outside the allow-listed folders" atau "not connected", sampaikan
+ke user untuk menambahkan folder / menyambungkan local agent — jangan menebak
+isi file.`
+    : "";
+
+  return [rules, docsListing, notionContract, localFs]
+    .filter((part) => part.trim().length > 0)
+    .join("\n\n---\n\n");
 }
 
 /**
@@ -229,13 +259,80 @@ export async function* runAgentSession({
   notionToken,
   attachments,
   disturbances,
+  localFsBridgeId,
 }: RunSessionParams): AsyncGenerator<AgentEvent> {
-  const append = buildSystemPromptAppend(docsFiles, projectPath);
+  const append = buildSystemPromptAppend(docsFiles, projectPath, Boolean(localFsBridgeId));
   const disturbancePrefix = disturbances?.length ? buildDisturbancePrefix(disturbances) : "";
   const prompt = await buildPrompt(message, attachments, disturbancePrefix);
 
-  const allowedTools = ["Read", "Glob", "Grep"];
+  // Without a bridge the SDK's own tools read the machine this process runs
+  // on, which is right for a locally-run Orchestrator. With a bridge, the
+  // user's own filesystem is served over it instead.
+  const allowedTools = localFsBridgeId ? [] : ["Read", "Glob", "Grep"];
   const mcpServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
+
+  if (localFsBridgeId) {
+    const bridgeId = localFsBridgeId;
+
+    const asToolResult = (result: Awaited<ReturnType<typeof callLocalFs>>) => ({
+      content: [
+        {
+          type: "text" as const,
+          text: result.ok ? JSON.stringify(result.data) : `Error: ${result.error}`,
+        },
+      ],
+      ...(result.ok ? {} : { isError: true }),
+    });
+
+    const readFileTool = tool(
+      "read_file",
+      "Read a text file from the user's local machine. Use an absolute path inside a folder the user allow-listed in their local agent.",
+      {
+        path: z.string().describe("Absolute path of the file on the user's machine"),
+      },
+      async (args) => asToolResult(await callLocalFs(bridgeId, "read", { path: args.path }))
+    );
+
+    const globTool = tool(
+      "glob",
+      "List files on the user's local machine matching a glob pattern (supports ** for nested folders), relative to cwd.",
+      {
+        pattern: z.string().describe("Glob pattern, e.g. **/*.ts"),
+        cwd: z.string().describe("Absolute folder to search in, on the user's machine"),
+      },
+      async (args) =>
+        asToolResult(await callLocalFs(bridgeId, "glob", { pattern: args.pattern, cwd: args.cwd }))
+    );
+
+    const grepTool = tool(
+      "grep",
+      "Search file contents on the user's local machine with a regular expression; returns file path, line number and the matching line.",
+      {
+        pattern: z.string().describe("Regular expression (Go/RE2 syntax)"),
+        cwd: z.string().describe("Absolute folder to search in, on the user's machine"),
+        glob: z.string().optional().describe("Optional glob to limit which files are searched"),
+      },
+      async (args) =>
+        asToolResult(
+          await callLocalFs(bridgeId, "grep", {
+            pattern: args.pattern,
+            cwd: args.cwd,
+            ...(args.glob ? { glob: args.glob } : {}),
+          })
+        )
+    );
+
+    mcpServers.local_fs = createSdkMcpServer({
+      name: "local_fs",
+      version: "1.0.0",
+      tools: [readFileTool, globTool, grepTool],
+    });
+    allowedTools.push(
+      "mcp__local_fs__read_file",
+      "mcp__local_fs__glob",
+      "mcp__local_fs__grep"
+    );
+  }
 
   if (notionToken) {
     const queryDatabaseTool = tool(

@@ -6,6 +6,7 @@ import { scanProject } from "@/lib/claude-dir";
 import { runAgentSession, type AttachmentInput } from "@/lib/agent";
 import { appendSessionTurn } from "@/lib/sessions";
 import { getStorageDriver } from "@/lib/storage";
+import { openBridge } from "@/lib/local-fs-bridge";
 import type { AttachmentMeta, Disturbance, ResolvedDisturbance, SessionToolCall } from "@/lib/types";
 
 type ChatRequestBody = {
@@ -18,6 +19,8 @@ type ChatRequestBody = {
   uploadSessionId?: string;
   attachments?: AttachmentMeta[];
   disturbances?: Disturbance[];
+  /** Set by the browser when a paired local agent should serve file reads. */
+  localFsBridgeId?: string;
 };
 
 function sseLine(event: string, data: unknown): string {
@@ -26,8 +29,17 @@ function sseLine(event: string, data: unknown): string {
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as ChatRequestBody;
-  const { projectId, agentName, notionAccountId, message, sessionId, uploadSessionId, attachments, disturbances } =
-    body;
+  const {
+    projectId,
+    agentName,
+    notionAccountId,
+    message,
+    sessionId,
+    uploadSessionId,
+    attachments,
+    disturbances,
+    localFsBridgeId,
+  } = body;
 
   if (!projectId || !agentName || !notionAccountId || !message) {
     return new Response(
@@ -89,12 +101,25 @@ export async function POST(req: NextRequest) {
       let assistantText = "";
       const toolCalls: SessionToolCall[] = [];
 
+      // Filesystem tool calls are relayed to the browser over this same
+      // stream; the browser answers on /api/local-fs/result.
+      let closeBridge: (() => void) | undefined;
+      if (localFsBridgeId) {
+        closeBridge = openBridge(localFsBridgeId, (bridgeReq) => {
+          controller.enqueue(enc.encode(sseLine("local_fs_request", {
+            type: "local_fs_request",
+            ...bridgeReq,
+          })));
+        });
+      }
+
       let attachmentInputs: AttachmentInput[] | undefined;
       if (attachments?.length) {
         if (!storageSessionKey) {
           controller.enqueue(
             enc.encode(sseLine("error", { message: "uploadSessionId wajib diisi kalau ada attachments" }))
           );
+          closeBridge?.();
           controller.close();
           return;
         }
@@ -113,6 +138,7 @@ export async function POST(req: NextRequest) {
               })
             )
           );
+          closeBridge?.();
           controller.close();
           return;
         }
@@ -142,6 +168,7 @@ export async function POST(req: NextRequest) {
           notionToken: process.env[notionAccount.env],
           attachments: attachmentInputs,
           disturbances: resolvedDisturbances,
+          localFsBridgeId,
         })) {
           if (evt.type === "text_delta") {
             assistantText += evt.text;
@@ -190,6 +217,7 @@ export async function POST(req: NextRequest) {
           )
         );
       } finally {
+        closeBridge?.();
         controller.close();
       }
     },

@@ -26,11 +26,17 @@ import {
 import { Markdown } from "@/components/markdown";
 import { OnboardingModal } from "@/components/onboarding-modal";
 import { LocalAgentStatusButton } from "@/components/local-agent-status";
+import { UserMenu } from "@/components/user-menu";
 import {
   postLocalFsResult,
   runLocalFsRequest,
   type LocalAgentStatus,
 } from "@/lib/local-agent-client";
+import {
+  clearScanCache,
+  discoverLocalProjects,
+  rescanLocalProject,
+} from "@/lib/project-discovery";
 import { NotionTicketPreviewModal } from "@/components/notion-ticket-preview";
 import { MissingFieldsPrompt } from "@/components/missing-fields-prompt";
 import { SessionSidebar } from "@/components/session-sidebar";
@@ -48,6 +54,7 @@ import type {
   AttachmentMeta,
   ConfigResponse,
   Disturbance,
+  LocalProject,
   NotionCreateStatus,
   ProjectScanResponse,
   SessionRecord,
@@ -91,6 +98,27 @@ export default function Home() {
   const [config, setConfig] = useState<ConfigResponse | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
 
+  /**
+   * Null until the local agent has been probed once. Project discovery waits
+   * for it: asking the server for a project list it must not own would flash
+   * the wrong list, or an empty one, on every load.
+   */
+  const [localAgentReady, setLocalAgentReady] = useState<boolean | null>(null);
+  const handleLocalAgentStatus = useCallback((status: LocalAgentStatus) => {
+    setLocalAgentReady(status.state === "connected");
+  }, []);
+
+  /** Roots reported by the local agent, keyed by project id. Empty when unpaired. */
+  const [projectRoots, setProjectRoots] = useState<Record<string, LocalProject>>({});
+  /**
+   * Scans collected during discovery, so picking a project needs no round trip.
+   *
+   * A ref, not state: nothing renders from it, and `loadProjectScan` both reads
+   * and writes it. As state it would change the callback's identity on every
+   * write, re-running the effect that called it — an update loop.
+   */
+  const localScansRef = useRef<Record<string, ProjectScanResponse>>({});
+
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
   const [scan, setScan] = useState<ProjectScanResponse | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -126,28 +154,59 @@ export default function Home() {
 
   const sessionStarted = messages.length > 0 || sending;
 
-  useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((data: ConfigResponse) => setConfig(data))
-      .catch(() => setConfigError(t.errors.configLoad));
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetch once on mount; error string just uses locale active at that time
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadConfig = useCallback(async (paired: boolean, force = false) => {
+    try {
+      const res = await fetch(`/api/config${paired ? "?localAgent=1" : ""}`);
+      const data = (await res.json()) as ConfigResponse;
+      if (!paired) {
+        setConfig(data);
+        setProjectRoots({});
+        localScansRef.current = {};
+        return;
+      }
+      // Paired: the project list is a property of the user's machine, so the
+      // tab reads it and the server only interprets what the tab sends.
+      const discovery = await discoverLocalProjects({ force });
+      setConfig({ ...data, projects: discovery.projects });
+      setProjectRoots(discovery.roots);
+      localScansRef.current = discovery.scans;
+    } catch {
+      setConfigError(t.errors.configLoad);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- error string just uses the locale active at call time
   }, []);
 
-  const loadProjectScan = (projectId: string) => {
+  useEffect(() => {
+    if (localAgentReady === null) return;
+    void loadConfig(localAgentReady);
+  }, [localAgentReady, loadConfig]);
+
+  const loadProjectScan = useCallback(
+    (projectId: string, options: { force?: boolean } = {}) => {
     if (!projectId) {
       setScan(null);
       return;
     }
     setScanLoading(true);
     setScanError(null);
-    fetch(`/api/projects/${projectId}`)
-      .then(async (r) => {
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error ?? t.errors.scanProject);
-        return data as ProjectScanResponse;
-      })
+
+    const root = projectRoots[projectId];
+    const cached = options.force ? undefined : localScansRef.current[projectId];
+    const source: Promise<ProjectScanResponse> = cached
+      ? Promise.resolve(cached)
+      : root
+        ? rescanLocalProject(root.path, { force: options.force })
+        : fetch(`/api/projects/${projectId}`).then(async (r) => {
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error ?? t.errors.scanProject);
+            return data as ProjectScanResponse;
+          });
+
+    source
       .then((data) => {
+        if (root) localScansRef.current[projectId] = data;
         setScan(data);
         const pending = pendingAgentRef.current;
         pendingAgentRef.current = null;
@@ -166,15 +225,17 @@ export default function Home() {
       })
       .catch((err) => {
         setScan(null);
-        setScanError(err.message);
+        setScanError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => setScanLoading(false));
-  };
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- error strings only read the locale active at call time
+    [projectRoots]
+  );
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-driven state, not derived render state
     loadProjectScan(selectedProjectId);
-  }, [selectedProjectId]);
+  }, [selectedProjectId, loadProjectScan]);
 
   useEffect(() => {
     if (stickToBottomRef.current) {
@@ -187,6 +248,19 @@ export default function Home() {
     if (!el) return;
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     stickToBottomRef.current = distanceFromBottom < 80;
+  };
+
+  /** Forces a fresh read of the machine: project list first, then the scan. */
+  const refreshProjects = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    clearScanCache();
+    try {
+      if (localAgentReady !== null) await loadConfig(localAgentReady, true);
+      if (selectedProjectId) loadProjectScan(selectedProjectId, { force: true });
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleProjectChange = (projectId: string) => {
@@ -330,13 +404,6 @@ export default function Home() {
     }
   };
 
-  // Only send a bridge id when a paired local agent is actually reachable;
-  // otherwise the agent keeps the server-side Read/Glob/Grep tools.
-  const [localAgentReady, setLocalAgentReady] = useState(false);
-  const handleLocalAgentStatus = useCallback((status: LocalAgentStatus) => {
-    setLocalAgentReady(status.state === "connected");
-  }, []);
-
   const sendMessage = async (overrideText?: string) => {
     const userText = (overrideText ?? input).trim();
     if (!userText || !readyToChat || sending) return;
@@ -364,6 +431,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: selectedProjectId,
+          // Paired projects exist only on the user's machine, so the server
+          // cannot look the path up in its own registry.
+          projectPath: projectRoots[selectedProjectId]?.path,
           agentName: selectedAgent,
           notionAccountId: selectedNotion,
           message: userText,
@@ -585,6 +655,7 @@ export default function Home() {
           )}
           <OnboardingModal />
           <LocalAgentStatusButton onStatusChange={handleLocalAgentStatus} />
+          <UserMenu />
           <LocaleToggle />
           <ThemeToggle />
         </div>
@@ -740,14 +811,15 @@ export default function Home() {
               </SelectContent>
             </Select>
 
-            {selectedProjectId && !sessionStarted && (
+            {!sessionStarted && (
               <Button
                 variant="ghost"
                 size="icon-sm"
-                onClick={() => loadProjectScan(selectedProjectId)}
+                onClick={() => void refreshProjects()}
+                disabled={refreshing}
                 title={t.composer.rescanTitle}
               >
-                <RefreshCw />
+                <RefreshCw className={refreshing ? "animate-spin" : undefined} />
               </Button>
             )}
           </div>

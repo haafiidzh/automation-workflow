@@ -2,6 +2,14 @@ export type Locale = "id" | "en";
 
 export const locales: Locale[] = ["id", "en"];
 
+/** One numbered step in the setup tabs; every `code` block gets a copy button. */
+export type SetupStep = {
+  title: string;
+  body?: string;
+  code?: string;
+  note?: string;
+};
+
 type Dictionary = {
   topBar: {
     brand: string;
@@ -82,6 +90,20 @@ type Dictionary = {
     selectProject: string;
     loadError: string;
   };
+  auth: {
+    loginTitle: string;
+    loginSubtitle: string;
+    usernameLabel: string;
+    usernamePlaceholder: string;
+    loginButton: string;
+    loggingIn: string;
+    loginFailed: string;
+    unknownUser: string;
+    passwordNotSupported: string;
+    insecureNotice: string;
+    logout: string;
+    loggedInAs: (label: string) => string;
+  };
   localAgent: {
     title: string;
     connect: string;
@@ -99,6 +121,8 @@ type Dictionary = {
     step3Body: string;
     tokenLabel: string;
     tokenPlaceholder: string;
+    showToken: string;
+    hideToken: string;
     pair: string;
     disconnect: string;
     recheck: string;
@@ -107,12 +131,28 @@ type Dictionary = {
     errorInvalidToken: string;
     downloadLink: string;
     close: string;
+    rootsTitle: string;
+    rootsEmpty: string;
+    rootsError: string;
+    rootRead: string;
+    rootWrite: string;
+    writeWarning: string;
+    writeHint: string;
   };
   onboarding: {
     triggerTitle: string;
     dialogTitle: string;
+    tabAgent: string;
+    tabFolders: string;
+    tabNotion: string;
     tabGuide: string;
     tabPrompt: string;
+    /** Numbered setup steps; every `code` block is rendered with a copy button. */
+    agentSteps: SetupStep[];
+    folderSteps: SetupStep[];
+    notionSteps: SetupStep[];
+    setupDocLink: string;
+    platformNote: string;
     copyTitle: string;
     promptIntro: string;
     guideStep1Title: string;
@@ -219,6 +259,21 @@ const id: Dictionary = {
     selectProject: "Pilih project dulu",
     loadError: "Gagal memuat daftar sesi",
   },
+  auth: {
+    loginTitle: "Masuk",
+    loginSubtitle: "Pilih identitas kamu untuk melanjutkan.",
+    usernameLabel: "Username",
+    usernamePlaceholder: "mis. hafidz",
+    loginButton: "Masuk",
+    loggingIn: "Memproses…",
+    loginFailed: "Gagal masuk",
+    unknownUser: "Username tidak dikenal",
+    passwordNotSupported: "Login berpassword belum didukung",
+    insecureNotice:
+      "Mode ini tanpa password — siapa pun yang bisa menjangkau server dan tahu username kamu bisa masuk sebagai kamu. Pakai hanya di jaringan lokal.",
+    logout: "Keluar",
+    loggedInAs: (label: string) => `Masuk sebagai ${label}`,
+  },
   localAgent: {
     title: "Akses folder lokal",
     connect: "Sambungkan akses folder lokal",
@@ -238,6 +293,8 @@ const id: Dictionary = {
     step3Body: "Ambil token dengan: orchestrator-agent token",
     tokenLabel: "Token pemasangan",
     tokenPlaceholder: "Tempel token dari orchestrator-agent token",
+    showToken: "Tampilkan token",
+    hideToken: "Sembunyikan token",
     pair: "Pasangkan",
     disconnect: "Putuskan",
     recheck: "Cek ulang",
@@ -248,12 +305,111 @@ const id: Dictionary = {
     errorInvalidToken: "Token ditolak local agent. Ambil token terbaru dengan orchestrator-agent token.",
     downloadLink: "Petunjuk download & instalasi",
     close: "Tutup",
+    rootsTitle: "Folder yang diizinkan",
+    rootsEmpty:
+      "Belum ada folder yang diizinkan. Jalankan orchestrator-agent allow <folder> lalu tekan tombol cek ulang.",
+    rootsError: "Gagal membaca daftar folder dari local agent.",
+    rootRead: "baca",
+    rootWrite: "baca+tulis",
+    writeWarning:
+      "Agent bisa membuat dan mengubah file di folder bertanda baca+tulis. Cabut izinnya dengan orchestrator-agent revoke-write <folder>.",
+    writeHint:
+      "Izin tulis harus diminta per folder: orchestrator-agent allow-write <folder>. Defaultnya baca saja.",
   },
   onboarding: {
     triggerTitle: "Cara daftarkan project baru",
     dialogTitle: "Daftarkan project baru",
-    tabGuide: "Panduan",
+    tabAgent: "Local Agent",
+    tabFolders: "Folder Project",
+    tabNotion: "Notion",
+    tabGuide: "Struktur .claude/",
     tabPrompt: "Prompt AI setup",
+    setupDocLink: "Panduan lengkap: docs/setup.md",
+    platformNote:
+      "Local agent baru tersedia untuk Linux x86_64. Windows dan macOS belum didukung.",
+    agentSteps: [
+      {
+        title: "1. Pasang binary",
+        body: "Unduh atau build binary, taruh di ~/.local/bin, dan beri bit eksekusi.",
+        code: `mkdir -p ~/.local/bin
+curl -fsSL https://<host-orchestrator>/local-agent/orchestrator-agent-linux-amd64 \\
+  -o ~/.local/bin/orchestrator-agent
+chmod +x ~/.local/bin/orchestrator-agent`,
+        note: "Kalau build sendiri: cd local-agent && ./build.sh lalu salin hasil di dist/.",
+      },
+      {
+        title: "2. Izinkan halaman ini menghubungi agent",
+        body: "Tanpa ini browser memblokir semua request ke agent (CORS).",
+        code: "orchestrator-agent allow-origin __ORIGIN__",
+      },
+      {
+        title: "3. Jalankan agent",
+        body: "Biarkan jalan selama kamu memakai Orchestrator.",
+        code: "orchestrator-agent run",
+        note: "Port default 47821; kalau terpakai, agent naik sampai 47830 dan halaman ini ikut mencari di rentang itu.",
+      },
+      {
+        title: "4. Jalankan otomatis saat login (opsional)",
+        code: `mkdir -p ~/.config/systemd/user
+cp orchestrator-agent.service ~/.config/systemd/user/
+systemctl --user enable --now orchestrator-agent`,
+      },
+      {
+        title: "5. Ambil token lalu pasangkan",
+        body: "Salin hasilnya ke dialog ikon hard disk di kanan atas. Titik indikator berubah hijau kalau berhasil.",
+        code: "orchestrator-agent token",
+      },
+    ],
+    folderSteps: [
+      {
+        title: "1. Daftarkan folder project",
+        body: "Daftar project di Orchestrator datang dari mesin kamu, bukan dari server. Folder yang tidak didaftarkan di sini akan ditolak dengan 403 — itu memang perilaku yang diinginkan.",
+        code: 'orchestrator-agent allow ~/projects/app-x --id app-x --label "App X"',
+        note: "Tanpa --id dan --label, keduanya diambil dari nama folder. id harus unik dan cocok ^[a-z0-9][a-z0-9_-]*$.",
+      },
+      {
+        title: "2. Beri izin tulis kalau perlu",
+        body: "Defaultnya baca saja. Izin tulis diminta per folder, dan agent baru bisa membuat atau mengubah file setelah ini.",
+        code: "orchestrator-agent allow-write ~/projects/app-x",
+        note: "Mencabutnya: orchestrator-agent revoke-write ~/projects/app-x",
+      },
+      {
+        title: "3. Verifikasi",
+        body: "status menampilkan id, label, mode dan path tiap folder.",
+        code: "orchestrator-agent status",
+      },
+      {
+        title: "4. Tiap komputer punya daftarnya sendiri",
+        body: "Kalau kamu memakai dua komputer, daftarkan foldernya di masing-masing. Daftar project adalah properti mesin, jadi tidak ikut berpindah.",
+      },
+    ],
+    notionSteps: [
+      {
+        title: "1. Buat internal integration",
+        body: "Buka notion.so/my-integrations, buat internal integration, lalu salin Internal Integration Secret-nya.",
+      },
+      {
+        title: "2. Share database ke integration itu",
+        body: "Buka database target di Notion → menu ⋯ → Connections → pilih integration tadi. Langkah ini paling sering terlewat; gejalanya Notion membalas 404 (bukan 403) saat membuat ticket.",
+      },
+      {
+        title: "3. Isi token ke env var di server",
+        body: "Token disimpan di server, tidak pernah ditampilkan di UI ini. Jangan tempel token ke chat.",
+        code: "NOTION_TOKEN_PERSONAL=secret_xxx",
+      },
+      {
+        title: "4. Daftarkan barisnya",
+        body: "Di workflow/notion-accounts.md. Kolom env berisi NAMA env var, bukan isinya. Kolom user diisi id user pemilik akun, atau dikosongkan kalau akun dipakai bersama.",
+        code: `| id | label | env | workspace | user |
+|---|---|---|---|---|
+| jarvis | Jarvis | NOTION_TOKEN_PERSONAL | Digitamaze | u_hafidz |`,
+      },
+      {
+        title: "5. Cocokkan dengan skema ticket",
+        body: "Struktur properti database dijelaskan di .claude/docs/NOTION_TASK_SCHEMA.md project (lihat tab Struktur .claude/). Agent membaca file itu untuk tahu field apa yang harus diisi.",
+      },
+    ],
+
     copyTitle: "Copy prompt",
     promptIntro: "Copy, jalankan di root project baru (folder itu jadi cwd agent-nya).",
     guideStep1Title: "Buat folder ",
@@ -321,12 +477,13 @@ curl -s -K .claude/notion.curlrc -X POST "https://api.notion.com/v1/databases/<d
     guideStep3: [
       'Paling gampang: pakai tab "Prompt AI setup" — copy, tempel ke Claude Code (atau agent lain) yang jalan di folder project barumu. Dia akan wawancara singkat lalu generate semua file di atas.',
     ],
-    guideStep4Title: "Terakhir, tambah satu baris ke ",
-    guideStep4Rest: " di repo orchestrator ini:",
+    guideStep4Title: "Kalau TIDAK memakai local agent, tambah satu baris ke ",
+    guideStep4Rest:
+      " di repo orchestrator ini. Dengan local agent ter-pair, file ini tidak dibaca sama sekali — daftar project datang dari tab Folder Project.",
     guideStep4Code: "| <id> | <label> | <path absolut project> |",
     guideStep4Note1: "Path harus di dalam ",
     guideStep4Note2:
-      " (lihat .env), kalau tidak project muncul disabled di dropdown.",
+      " (lihat .env) untuk mode tanpa local agent, kalau tidak project muncul disabled di dropdown. Saat ter-pair, batas itu tidak berlaku dan yang menentukan adalah allow-list local agent.",
     guideExample: "Contoh struktur lengkap yang benar: ~/qc_apps/.claude.",
     prompt: `Kamu bantu setup folder ".claude" di repo ini supaya project ini bisa didaftarkan ke app "orchestrator" (Claude Agent SDK runner lokal).
 
@@ -461,6 +618,21 @@ const en: Dictionary = {
     selectProject: "Pick a project first",
     loadError: "Failed to load session list",
   },
+  auth: {
+    loginTitle: "Sign in",
+    loginSubtitle: "Pick your identity to continue.",
+    usernameLabel: "Username",
+    usernamePlaceholder: "e.g. hafidz",
+    loginButton: "Sign in",
+    loggingIn: "Working…",
+    loginFailed: "Sign-in failed",
+    unknownUser: "Unknown username",
+    passwordNotSupported: "Password login is not supported yet",
+    insecureNotice:
+      "This mode has no password — anyone who can reach the server and knows your username can sign in as you. Use it on a local network only.",
+    logout: "Sign out",
+    loggedInAs: (label: string) => `Signed in as ${label}`,
+  },
   localAgent: {
     title: "Local folder access",
     connect: "Connect local folder access",
@@ -480,6 +652,8 @@ const en: Dictionary = {
     step3Body: "Get the token with: orchestrator-agent token",
     tokenLabel: "Pairing token",
     tokenPlaceholder: "Paste the token from orchestrator-agent token",
+    showToken: "Show token",
+    hideToken: "Hide token",
     pair: "Pair",
     disconnect: "Disconnect",
     recheck: "Re-check",
@@ -489,12 +663,111 @@ const en: Dictionary = {
     errorInvalidToken: "The local agent rejected this token. Get a fresh one with orchestrator-agent token.",
     downloadLink: "Download & install instructions",
     close: "Close",
+    rootsTitle: "Allowed folders",
+    rootsEmpty:
+      "No folder is allow-listed yet. Run orchestrator-agent allow <folder>, then press re-check.",
+    rootsError: "Could not read the folder list from the local agent.",
+    rootRead: "read",
+    rootWrite: "read+write",
+    writeWarning:
+      "The agent can create and change files in folders marked read+write. Take it back with orchestrator-agent revoke-write <folder>.",
+    writeHint:
+      "Write access is granted per folder: orchestrator-agent allow-write <folder>. The default is read-only.",
   },
   onboarding: {
     triggerTitle: "How to register a new project",
     dialogTitle: "Register a new project",
-    tabGuide: "Guide",
+    tabAgent: "Local Agent",
+    tabFolders: "Project folders",
+    tabNotion: "Notion",
+    tabGuide: ".claude/ structure",
     tabPrompt: "AI setup prompt",
+    setupDocLink: "Full guide: docs/setup.md",
+    platformNote:
+      "The local agent is Linux x86_64 only for now. Windows and macOS are not supported yet.",
+    agentSteps: [
+      {
+        title: "1. Install the binary",
+        body: "Download or build it, put it in ~/.local/bin and make it executable.",
+        code: `mkdir -p ~/.local/bin
+curl -fsSL https://<orchestrator-host>/local-agent/orchestrator-agent-linux-amd64 \\
+  -o ~/.local/bin/orchestrator-agent
+chmod +x ~/.local/bin/orchestrator-agent`,
+        note: "Building it yourself: cd local-agent && ./build.sh, then copy the file from dist/.",
+      },
+      {
+        title: "2. Let this page talk to the agent",
+        body: "Without this the browser blocks every request to the agent (CORS).",
+        code: "orchestrator-agent allow-origin __ORIGIN__",
+      },
+      {
+        title: "3. Start the agent",
+        body: "Leave it running while you use Orchestrator.",
+        code: "orchestrator-agent run",
+        note: "The default port is 47821; if it is taken the agent walks up to 47830, and this page probes the same range.",
+      },
+      {
+        title: "4. Start it at login (optional)",
+        code: `mkdir -p ~/.config/systemd/user
+cp orchestrator-agent.service ~/.config/systemd/user/
+systemctl --user enable --now orchestrator-agent`,
+      },
+      {
+        title: "5. Get the token and pair",
+        body: "Paste the output into the hard-drive icon dialog in the top bar. The dot turns green once it works.",
+        code: "orchestrator-agent token",
+      },
+    ],
+    folderSteps: [
+      {
+        title: "1. Register a project folder",
+        body: "The project list in Orchestrator comes from your machine, not from the server. A folder that is not registered here is refused with 403 — that is the intended behaviour.",
+        code: 'orchestrator-agent allow ~/projects/app-x --id app-x --label "App X"',
+        note: "Without --id and --label both are derived from the folder name. The id must be unique and match ^[a-z0-9][a-z0-9_-]*$.",
+      },
+      {
+        title: "2. Grant write access if you need it",
+        body: "Read-only is the default. Write access is granted per folder, and the agent can only create or change files after this.",
+        code: "orchestrator-agent allow-write ~/projects/app-x",
+        note: "Take it back with: orchestrator-agent revoke-write ~/projects/app-x",
+      },
+      {
+        title: "3. Verify",
+        body: "status prints the id, label, mode and path of every folder.",
+        code: "orchestrator-agent status",
+      },
+      {
+        title: "4. Every machine keeps its own list",
+        body: "If you work on two computers, register the folders on each one. The project list is a property of the machine, so it does not travel with your account.",
+      },
+    ],
+    notionSteps: [
+      {
+        title: "1. Create an internal integration",
+        body: "Open notion.so/my-integrations, create an internal integration and copy its Internal Integration Secret.",
+      },
+      {
+        title: "2. Share the database with that integration",
+        body: "Open the target database in Notion → ⋯ menu → Connections → pick the integration. This is the step people miss most often; the symptom is Notion answering 404 (not 403) when a ticket is created.",
+      },
+      {
+        title: "3. Put the token in a server env var",
+        body: "The token lives on the server and is never shown in this UI. Never paste a token into the chat.",
+        code: "NOTION_TOKEN_PERSONAL=secret_xxx",
+      },
+      {
+        title: "4. Register the row",
+        body: "In workflow/notion-accounts.md. The env column holds the NAME of the env var, not its value. The user column holds the owning user id, or stays empty for a shared account.",
+        code: `| id | label | env | workspace | user |
+|---|---|---|---|---|
+| jarvis | Jarvis | NOTION_TOKEN_PERSONAL | Digitamaze | u_hafidz |`,
+      },
+      {
+        title: "5. Match it to the ticket schema",
+        body: "The database property layout is documented in the project's .claude/docs/NOTION_TASK_SCHEMA.md (see the .claude/ structure tab). The agent reads that file to know which fields to fill.",
+      },
+    ],
+
     copyTitle: "Copy prompt",
     promptIntro: "Copy, run it at the new project's root (that folder becomes the agent's cwd).",
     guideStep1Title: "Create a ",
@@ -562,12 +835,13 @@ curl -s -K .claude/notion.curlrc -X POST "https://api.notion.com/v1/databases/<d
     guideStep3: [
       'Easiest: use the "AI setup prompt" tab — copy it, paste into Claude Code (or another agent) running in your new project\'s folder. It will interview you briefly then generate all files above.',
     ],
-    guideStep4Title: "Finally, add one row to ",
-    guideStep4Rest: " in this orchestrator repo:",
+    guideStep4Title: "If you are NOT using the local agent, add one row to ",
+    guideStep4Rest:
+      " in this orchestrator repo. With a local agent paired this file is not read at all — the project list comes from the Project folders tab.",
     guideStep4Code: "| <id> | <label> | <absolute project path> |",
     guideStep4Note1: "Path must be inside ",
     guideStep4Note2:
-      " (see .env), otherwise the project shows disabled in the dropdown.",
+      " (see .env) in the no-agent mode, otherwise the project shows disabled in the dropdown. Once paired that limit does not apply and the local agent's allow-list decides instead.",
     guideExample: "Example of a correct full structure: ~/qc_apps/.claude.",
     prompt: `Help me set up a ".claude" folder in this repo so this project can be registered with the "orchestrator" app (a local Claude Agent SDK runner).
 

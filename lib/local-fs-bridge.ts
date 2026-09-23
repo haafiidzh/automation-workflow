@@ -10,7 +10,12 @@
  * persisted, and a bridge dies with the stream that opened it.
  */
 
-export type LocalFsOp = "read" | "glob" | "grep";
+import { FsSourceError, type DirEntry, type FsErrorCode, type FsSource } from "./fs-source";
+
+export type LocalFsOp = "list" | "read" | "glob" | "grep" | "write" | "mkdir";
+
+/** Ops sent to the local agent as a JSON POST body instead of a query string. */
+export const WRITE_OPS: ReadonlySet<LocalFsOp> = new Set<LocalFsOp>(["write", "mkdir"]);
 
 export type LocalFsRequest = {
   requestId: string;
@@ -20,7 +25,8 @@ export type LocalFsRequest = {
 
 export type LocalFsResult =
   | { ok: true; data: unknown }
-  | { ok: false; error: string };
+  /** `code` is absent for failures that never reached the local agent. */
+  | { ok: false; error: string; code?: FsErrorCode };
 
 type Pending = {
   resolve: (value: LocalFsResult) => void;
@@ -28,6 +34,8 @@ type Pending = {
 };
 
 type Bridge = {
+  /** Owner of the chat stream this bridge belongs to. */
+  userId: string;
   onRequest: (req: LocalFsRequest) => void;
   pending: Map<string, Pending>;
 };
@@ -43,9 +51,10 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 export function openBridge(
   bridgeId: string,
+  userId: string,
   onRequest: (req: LocalFsRequest) => void
 ): () => void {
-  const bridge: Bridge = { onRequest, pending: new Map() };
+  const bridge: Bridge = { userId, onRequest, pending: new Map() };
   bridges.set(bridgeId, bridge);
 
   return () => {
@@ -60,6 +69,15 @@ export function openBridge(
 
 export function isBridgeOpen(bridgeId: string): boolean {
   return bridges.has(bridgeId);
+}
+
+/**
+ * Owner of an open bridge, or undefined when there is none. Callers must check
+ * this before delivering a result: without it anyone on the LAN could inject
+ * fake filesystem answers into someone else's chat by guessing a bridge id.
+ */
+export function getBridgeOwner(bridgeId: string): string | undefined {
+  return bridges.get(bridgeId)?.userId;
 }
 
 /**
@@ -103,6 +121,36 @@ export function callLocalFs(
       });
     }
   });
+}
+
+/**
+ * An `FsSource` that reads through an open bridge, so server code can scan a
+ * project living on the user's machine using the same logic as a local scan.
+ */
+export function bridgeFsSource(bridgeId: string): FsSource {
+  const fail = (result: { error: string; code?: FsErrorCode }): never => {
+    throw new FsSourceError(result.code ?? "unknown", result.error);
+  };
+
+  return {
+    async list(path: string): Promise<DirEntry[]> {
+      const result = await callLocalFs(bridgeId, "list", { path });
+      if (!result.ok) fail(result);
+      const data = (result as { data: unknown }).data as {
+        entries?: { name: string; isDir: boolean }[];
+      };
+      return (data?.entries ?? []).map((e) => ({
+        name: e.name,
+        type: e.isDir ? "dir" : "file",
+      }));
+    },
+    async read(path: string): Promise<string> {
+      const result = await callLocalFs(bridgeId, "read", { path });
+      if (!result.ok) fail(result);
+      const data = (result as { data: unknown }).data as { content?: string };
+      return data?.content ?? "";
+    },
+  };
 }
 
 /**

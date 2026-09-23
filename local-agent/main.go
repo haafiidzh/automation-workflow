@@ -37,17 +37,39 @@ func main() {
 	case "token":
 		fmt.Println(cfg.Snapshot().Token)
 	case "allow":
-		if len(args) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: orchestrator-agent allow <folder>")
+		folders, id, label, err := parseAllowArgs(args)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		for _, p := range args {
-			abs, err := cfg.AddRoot(p)
+		if len(folders) > 1 && id != "" {
+			fmt.Fprintln(os.Stderr, "--id can only be given for a single folder")
+			os.Exit(2)
+		}
+		for _, p := range folders {
+			root, err := cfg.AddRoot(p, id, label)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "cannot allow", p+":", err)
 				os.Exit(1)
 			}
-			fmt.Println("allowed:", abs)
+			fmt.Printf("allowed: %s (id %s, label %q, %s)\n", root.Path, root.ID, root.Label, root.Mode)
+		}
+	case "allow-write", "revoke-write":
+		if len(args) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: orchestrator-agent "+cmd+" <folder>")
+			os.Exit(2)
+		}
+		mode := ModeRW
+		if cmd == "revoke-write" {
+			mode = ModeRO
+		}
+		for _, p := range args {
+			root, err := cfg.SetRootMode(p, mode)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "cannot change mode for", p+":", err)
+				os.Exit(1)
+			}
+			fmt.Printf("%s is now %s\n", root.Path, root.Mode)
 		}
 	case "allow-origin":
 		if len(args) == 0 {
@@ -65,7 +87,14 @@ func main() {
 		snap := cfg.Snapshot()
 		fmt.Println("config:  ", cfg.Path())
 		fmt.Println("version: ", version)
-		fmt.Println("folders: ", strings.Join(snap.AllowedRoots, ", "))
+		if len(snap.AllowedRoots) == 0 {
+			fmt.Println("folders:  (none)")
+		} else {
+			fmt.Println("folders:")
+			for _, r := range snap.AllowedRoots {
+				fmt.Printf("  %-16s %-20s %-4s %s\n", r.ID, r.Label, r.Mode, r.Path)
+			}
+		}
 		fmt.Println("origins: ", strings.Join(snap.AllowedOrigins, ", "))
 		fmt.Printf("max file size: %d bytes\n", snap.MaxFileSize)
 	case "help", "-h", "--help":
@@ -77,13 +106,42 @@ func main() {
 	}
 }
 
+// parseAllowArgs splits `allow` arguments into folders and the optional
+// --id / --label flags, which may appear in any position.
+func parseAllowArgs(args []string) (folders []string, id, label string, err error) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--id", "--label":
+			if i+1 >= len(args) {
+				return nil, "", "", fmt.Errorf("%s needs a value", args[i])
+			}
+			if args[i] == "--id" {
+				id = args[i+1]
+			} else {
+				label = args[i+1]
+			}
+			i++
+		default:
+			folders = append(folders, args[i])
+		}
+	}
+	if len(folders) == 0 {
+		return nil, "", "", fmt.Errorf("usage: orchestrator-agent allow <folder> [--id <id>] [--label <text>]")
+	}
+	return folders, id, label, nil
+}
+
 func usage() {
 	fmt.Println(`orchestrator-agent — local filesystem bridge for Orchestrator
 
 Commands:
   run                      start the HTTP server on 127.0.0.1 (default)
   token                    print the pairing token to paste into the web UI
-  allow <folder>...        allow the agent to serve these folders
+  allow <folder>...        allow the agent to serve these folders (read-only)
+      --id <id>            project id shown to Orchestrator (single folder only)
+      --label <text>       project label shown to Orchestrator
+  allow-write <folder>...  let the agent modify files in these folders
+  revoke-write <folder>... put these folders back to read-only
   allow-origin <url>...    allow a browser origin (your Orchestrator host)
   status                   show config path, folders and origins`)
 }
@@ -103,7 +161,9 @@ func runServer(cfg *Config) {
 	if len(snap.AllowedRoots) == 0 {
 		fmt.Println("warning: no folders allow-listed yet — run: orchestrator-agent allow <folder>")
 	} else {
-		fmt.Println("serving:", strings.Join(snap.AllowedRoots, ", "))
+		for _, r := range snap.AllowedRoots {
+			fmt.Printf("serving: %s (%s, %s)\n", r.Path, r.ID, r.Mode)
+		}
 	}
 
 	httpSrv := &http.Server{

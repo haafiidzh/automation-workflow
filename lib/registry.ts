@@ -56,36 +56,49 @@ export function isWithinAllowedRoot(resolvedPath: string): boolean {
   return target === root || target.startsWith(root + path.sep);
 }
 
-export function getProjects(): Project[] {
+export type ProjectRow = { id: string; label: string; path: string };
+
+/**
+ * The rows of `workflow/projects.md`, parsed but not scanned.
+ *
+ * This registry is the fallback for running Orchestrator on the same machine as
+ * the projects. When a local agent is paired the project list comes from that
+ * machine instead (`listProjects()`), and this file is not read at all.
+ */
+export function getProjectRows(): ProjectRow[] {
   const filePath = path.join(WORKFLOW_DIR, "projects.md");
   if (!fs.existsSync(filePath)) return [];
   const raw = fs.readFileSync(filePath, "utf-8");
-  const rows = parseMarkdownTable(raw);
-  return rows
+  return parseMarkdownTable(raw)
     .filter((r) => r.id)
+    .map((r) => ({
+      id: r.id,
+      label: r.label ?? r.id,
+      path: expandHome(r.path ?? ""),
+    }));
+}
+
+export function getProjects(): Project[] {
+  const rows = getProjectRows();
+  return rows
     .map((r) => {
-      const projectPath = expandHome(r.path ?? "");
-      if (!isWithinAllowedRoot(projectPath)) {
-        return {
-          id: r.id,
-          label: r.label ?? r.id,
-          path: projectPath,
-          valid: false,
-          missing: ["di luar ALLOWED_PROJECT_ROOT"],
-        };
+      // ALLOWED_PROJECT_ROOT only means something for paths on this machine,
+      // so it is enforced here and skipped entirely on the paired path.
+      if (!isWithinAllowedRoot(r.path)) {
+        return { ...r, valid: false, missing: ["di luar ALLOWED_PROJECT_ROOT"] };
       }
-      const scan = scanProject(projectPath);
-      return {
-        id: r.id,
-        label: r.label ?? r.id,
-        path: projectPath,
-        valid: scan.validation.valid,
-        missing: scan.validation.missing,
-      };
+      const scan = scanProject(r.path);
+      return { ...r, valid: scan.validation.valid, missing: scan.validation.missing };
     });
 }
 
-export function getNotionAccounts(): NotionAccount[] {
+/**
+ * Accounts visible to one user. A row with an empty `user` column is shared by
+ * every user on purpose — that is how a team Notion workspace is registered.
+ * Passing no userId returns every account and must only be done from code that
+ * has already established there is no user to scope to.
+ */
+export function getNotionAccounts(userId?: string): NotionAccount[] {
   const filePath = path.join(WORKFLOW_DIR, "notion-accounts.md");
   if (!fs.existsSync(filePath)) return [];
   const raw = fs.readFileSync(filePath, "utf-8");
@@ -101,8 +114,10 @@ export function getNotionAccounts(): NotionAccount[] {
         env: envName,
         workspace: r.workspace ?? "",
         available: Boolean(value && value.trim().length > 0),
+        user: (r.user ?? "").trim(),
       };
-    });
+    })
+    .filter((a) => !userId || a.user === "" || a.user === userId);
 }
 
 export function getProjectById(id: string): Project | undefined {

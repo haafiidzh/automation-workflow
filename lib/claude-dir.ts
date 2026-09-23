@@ -1,70 +1,101 @@
 import fs from "fs";
-import path from "path";
-import matter from "gray-matter";
-import type { AgentInfo, ProjectScanResponse } from "./types";
+import {
+  claudePaths,
+  joinPath,
+  FsSourceError,
+  type DirEntry,
+  type FsSource,
+  type ScanInput,
+} from "./fs-source";
+import { readRulesFromInput, scanProjectFromInput } from "./project-scan";
+import type { ProjectScanResponse } from "./types";
 
-function isDir(p: string): boolean {
+/** `FsSource` over Node `fs` — the server's own disk. */
+export function nodeFsSource(): FsSource {
+  return {
+    async list(path: string): Promise<DirEntry[]> {
+      try {
+        return fs
+          .readdirSync(path, { withFileTypes: true })
+          .map((d) => ({ name: d.name, type: d.isDirectory() ? "dir" : "file" }));
+      } catch (err) {
+        throw toFsSourceError(path, err);
+      }
+    },
+    async read(path: string): Promise<string> {
+      try {
+        return fs.readFileSync(path, "utf-8");
+      } catch (err) {
+        throw toFsSourceError(path, err);
+      }
+    },
+  };
+}
+
+function toFsSourceError(path: string, err: unknown): FsSourceError {
+  const code = (err as NodeJS.ErrnoException)?.code;
+  if (code === "ENOENT" || code === "ENOTDIR") {
+    return new FsSourceError("not-found", `${path} does not exist`);
+  }
+  if (code === "EACCES" || code === "EPERM") {
+    return new FsSourceError("forbidden", `${path} is not readable`);
+  }
+  return new FsSourceError("unknown", err instanceof Error ? err.message : String(err));
+}
+
+function listSync(path: string): DirEntry[] | null {
   try {
-    return fs.statSync(p).isDirectory();
+    return fs
+      .readdirSync(path, { withFileTypes: true })
+      .map((d) => ({ name: d.name, type: d.isDirectory() ? "dir" : ("file" as const) }));
   } catch {
-    return false;
+    return null;
   }
 }
 
-function isFile(p: string): boolean {
-  try {
-    return fs.statSync(p).isFile();
-  } catch {
-    return false;
+/**
+ * Synchronous twin of `collectScanInput`, kept so the existing synchronous call
+ * sites keep working. The interpretation is shared with the async path — only
+ * the reading differs.
+ */
+function collectScanInputSync(
+  projectPath: string,
+  opts: { includeRules?: boolean } = {}
+): ScanInput {
+  const includeRules = opts.includeRules ?? true;
+  const { agentsDir, docsDir, rulesDir } = claudePaths(projectPath);
+
+  const dirs: ScanInput["dirs"] = {
+    [projectPath]: listSync(projectPath),
+    [agentsDir]: listSync(agentsDir),
+    [docsDir]: listSync(docsDir),
+    [rulesDir]: listSync(rulesDir),
+  };
+
+  const files: ScanInput["files"] = {};
+  const readInto = (dir: string, name: string) => {
+    const full = joinPath(dir, name);
+    try {
+      files[full] = fs.readFileSync(full, "utf-8");
+    } catch {
+      files[full] = null;
+    }
+  };
+
+  for (const e of dirs[agentsDir] ?? []) {
+    if (e.type === "file" && e.name.endsWith(".md")) readInto(agentsDir, e.name);
   }
-}
+  if (includeRules) {
+    for (const e of dirs[rulesDir] ?? []) {
+      if (e.type === "file") readInto(rulesDir, e.name);
+    }
+  }
 
-function scanAgents(agentsDir: string): AgentInfo[] {
-  if (!isDir(agentsDir)) return [];
-  return fs
-    .readdirSync(agentsDir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => {
-      const full = path.join(agentsDir, f);
-      const raw = fs.readFileSync(full, "utf-8");
-      const { data } = matter(raw);
-      const nameFromFile = f.replace(/\.md$/, "");
-      return {
-        name: (data.name as string) || nameFromFile,
-        description: (data.description as string) || "",
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-function scanDocsFiles(docsDir: string): string[] {
-  if (!isDir(docsDir)) return [];
-  return fs
-    .readdirSync(docsDir)
-    .filter((f) => isFile(path.join(docsDir, f)))
-    .sort((a, b) => a.localeCompare(b));
+  return { projectPath, dirs, files };
 }
 
 export function scanProject(projectPath: string): ProjectScanResponse {
-  const claudeDir = path.join(projectPath, ".claude");
-  const agentsDir = path.join(claudeDir, "agents");
-  const docsDir = path.join(claudeDir, "docs");
-  const rulesDir = path.join(claudeDir, "rules");
-  const taskingFile = path.join(rulesDir, "tasking.md");
-
-  const missing: string[] = [];
-  if (!isDir(projectPath)) missing.push("project path tidak ditemukan");
-  if (!isDir(agentsDir)) missing.push(".claude/agents/");
-  if (!isDir(docsDir)) missing.push(".claude/docs/");
-  if (!isFile(taskingFile)) missing.push(".claude/rules/tasking.md");
-
-  const valid = missing.length === 0;
-
-  return {
-    validation: { valid, missing },
-    agents: valid ? scanAgents(agentsDir) : [],
-    docsFiles: valid ? scanDocsFiles(docsDir) : [],
-  };
+  return scanProjectFromInput(collectScanInputSync(projectPath, { includeRules: false }));
 }
 
 /**
@@ -72,29 +103,5 @@ export function scanProject(projectPath: string): ProjectScanResponse {
  * Throws if tasking.md is missing — callers must fail the session clearly.
  */
 export function readRulesContent(projectPath: string): string {
-  const rulesDir = path.join(projectPath, ".claude", "rules");
-  const taskingFile = path.join(rulesDir, "tasking.md");
-  if (!isFile(taskingFile)) {
-    throw new Error(
-      `.claude/rules/tasking.md tidak ditemukan di ${projectPath}`
-    );
-  }
-
-  const files = isDir(rulesDir)
-    ? fs
-        .readdirSync(rulesDir)
-        .filter((f) => isFile(path.join(rulesDir, f)))
-        .sort((a, b) => {
-          if (a === "tasking.md") return -1;
-          if (b === "tasking.md") return 1;
-          return a.localeCompare(b);
-        })
-    : ["tasking.md"];
-
-  return files
-    .map((f) => {
-      const content = fs.readFileSync(path.join(rulesDir, f), "utf-8");
-      return `## Rules: ${f}\n\n${content}`;
-    })
-    .join("\n\n---\n\n");
+  return readRulesFromInput(collectScanInputSync(projectPath));
 }

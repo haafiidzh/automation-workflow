@@ -90,6 +90,9 @@ func (s *server) cors(next http.HandlerFunc) http.HandlerFunc {
 // auth rejects any request without the pairing token.
 func (s *server) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Picks up allow/allow-write/revoke-write/allow-origin run from a
+		// separate CLI invocation while this server is already running.
+		s.cfg.MaybeReload()
 		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		tok = strings.TrimSpace(tok)
 		if !s.cfg.TokenMatches(tok) {
@@ -106,20 +109,47 @@ func (s *server) routes() http.Handler {
 	// connected/disconnected state before the user has pasted a token. It
 	// leaks nothing but liveness and the number of allow-listed folders.
 	mux.HandleFunc("/health", s.cors(s.handleHealth))
+	// /projects is the project picker's source of truth. It leaks absolute
+	// paths from the user's machine, so unlike /health it requires the token.
+	mux.HandleFunc("/projects", s.cors(s.auth(s.handleProjects)))
+	// /roots is the same data under the name the UI uses when it is showing
+	// permissions rather than projects. Authenticated for the same reason.
+	mux.HandleFunc("/roots", s.cors(s.auth(s.handleRoots)))
 	mux.HandleFunc("/list", s.cors(s.auth(s.handleList)))
 	mux.HandleFunc("/read", s.cors(s.auth(s.handleRead)))
 	mux.HandleFunc("/glob", s.cors(s.auth(s.handleGlob)))
 	mux.HandleFunc("/grep", s.cors(s.auth(s.handleGrep)))
+	// Write endpoints. They need the token AND an allow-listed origin AND a
+	// JSON content type, and only touch roots explicitly marked rw.
+	mux.HandleFunc("/write", s.cors(s.auth(s.handleWrite)))
+	mux.HandleFunc("/mkdir", s.cors(s.auth(s.handleMkdir)))
 	return mux
 }
 
 func (s *server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	s.cfg.MaybeReload()
 	snap := s.cfg.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
 		"version": version,
 		"roots":   len(snap.AllowedRoots),
 	})
+}
+
+func (s *server) allowedRoots() Roots {
+	roots := s.cfg.Snapshot().AllowedRoots
+	if roots == nil {
+		return Roots{}
+	}
+	return roots
+}
+
+func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"projects": s.allowedRoots()})
+}
+
+func (s *server) handleRoots(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"roots": s.allowedRoots()})
 }
 
 func (s *server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -310,4 +340,148 @@ func (s *server) handleGrep(w http.ResponseWriter, r *http.Request) {
 		"matches":   matches,
 		"truncated": truncated,
 	})
+}
+
+// maxWriteSize caps a single /write body. Source files are far below this; the
+// limit exists so a runaway agent cannot fill the user's disk in one request.
+const maxWriteSize = 5 << 20
+
+// requireJSONPost enforces POST plus an explicit JSON content type. The content
+// type matters: a cross-origin HTML form can only send urlencoded, plain text
+// or multipart bodies, so requiring JSON removes simple-form CSRF entirely,
+// on top of the bearer token and the origin allow-list.
+func (s *server) requireJSONPost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		writeErr(w, http.StatusMethodNotAllowed, "this endpoint requires POST")
+		return false
+	}
+	ct := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	if ct != "application/json" {
+		writeErr(w, http.StatusUnsupportedMediaType, "Content-Type must be application/json")
+		return false
+	}
+	return true
+}
+
+// decodeJSON reads a size-capped JSON body, answering 413 when it is too big.
+func decodeJSON(w http.ResponseWriter, r *http.Request, limit int64, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("body is over the %d byte limit", limit))
+			return false
+		}
+		writeErr(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return false
+	}
+	return true
+}
+
+type writeRequest struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+func (s *server) handleWrite(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJSONPost(w, r) {
+		return
+	}
+	var req writeRequest
+	// The JSON envelope is larger than the content it carries, so the reader
+	// limit is generous and the content itself is checked exactly below.
+	if !decodeJSON(w, r, maxWriteSize*2, &req) {
+		return
+	}
+	if int64(len(req.Content)) > maxWriteSize {
+		writeErr(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("content is %d bytes, over the %d byte limit", len(req.Content), maxWriteSize))
+		return
+	}
+
+	target, err := s.cfg.CheckWritePath(req.Path)
+	if err != nil {
+		s.pathError(w, err)
+		return
+	}
+
+	written, err := atomicWrite(target, []byte(req.Content))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":    target,
+		"size":    written,
+		"created": true,
+	})
+}
+
+type mkdirRequest struct {
+	Path string `json:"path"`
+}
+
+func (s *server) handleMkdir(w http.ResponseWriter, r *http.Request) {
+	if !s.requireJSONPost(w, r) {
+		return
+	}
+	var req mkdirRequest
+	if !decodeJSON(w, r, 1<<16, &req) {
+		return
+	}
+	target, err := s.cfg.CheckMkdirPath(req.Path)
+	if err != nil {
+		s.pathError(w, err)
+		return
+	}
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": target})
+}
+
+// atomicWrite writes through a temporary file in the destination directory and
+// renames it into place, so a crash or a dropped bridge can never leave a
+// half-written source file behind. An existing file keeps its permissions.
+func atomicWrite(target string, data []byte) (int, error) {
+	dir := filepath.Dir(target)
+	perm := os.FileMode(0o644)
+	if info, err := os.Stat(target); err == nil {
+		perm = info.Mode().Perm()
+	}
+
+	tmp, err := os.CreateTemp(dir, ".orchestrator-agent-*")
+	if err != nil {
+		return 0, err
+	}
+	tmpName := tmp.Name()
+	cleanup := func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}
+
+	n, err := tmp.Write(data)
+	if err != nil {
+		cleanup()
+		return 0, err
+	}
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return 0, err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		cleanup()
+		return 0, err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return 0, err
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		os.Remove(tmpName)
+		return 0, err
+	}
+	return n, nil
 }

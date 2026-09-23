@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { getUsers } from "./users";
 import type { NotionCreateStatus, SessionRecord, SessionSummary, SessionTurn } from "./types";
 
 const WORKFLOW_DIR = path.join(process.cwd(), "workflow");
@@ -14,6 +15,22 @@ function sessionFilePath(sessionId: string): string {
   return path.join(SESSIONS_DIR, `${sessionId}.json`);
 }
 
+/**
+ * Migration rule for records written before the auth layer: they are attributed
+ * to the first user in users.json. Hiding them instead would silently delete
+ * every existing chat from the UI, which is worse than a wrong-but-visible
+ * owner on a single-user install. Re-attribute by hand if that is not true.
+ */
+function ownerOf(record: SessionRecord): string | undefined {
+  if (record.userId) return record.userId;
+  return getUsers()[0]?.id;
+}
+
+export function getSessionOwner(sessionId: string): string | undefined {
+  const record = getSessionById(sessionId);
+  return record ? ownerOf(record) : undefined;
+}
+
 function previewFrom(turns: SessionTurn[]): string {
   const first = turns.find((t) => t.role === "user");
   const text = (first?.text ?? "").trim().replace(/\s+/g, " ");
@@ -22,6 +39,7 @@ function previewFrom(turns: SessionTurn[]): string {
 
 export function appendSessionTurn(params: {
   sessionId: string;
+  userId: string;
   projectId: string;
   agentName: string;
   notionAccountId: string;
@@ -38,11 +56,13 @@ export function appendSessionTurn(params: {
   if (fs.existsSync(filePath)) {
     record = JSON.parse(fs.readFileSync(filePath, "utf-8")) as SessionRecord;
     record.turns.push(params.userTurn, params.assistantTurn);
+    record.userId = record.userId ?? params.userId;
     record.agentName = params.agentName;
     record.notionAccountId = params.notionAccountId;
   } else {
     record = {
       sessionId: params.sessionId,
+      userId: params.userId,
       projectId: params.projectId,
       agentName: params.agentName,
       notionAccountId: params.notionAccountId,
@@ -60,7 +80,7 @@ export function appendSessionTurn(params: {
   fs.writeFileSync(filePath, JSON.stringify(record, null, 2));
 }
 
-export function listSessions(projectId: string): SessionSummary[] {
+export function listSessions(projectId: string, userId: string): SessionSummary[] {
   if (!fs.existsSync(SESSIONS_DIR)) return [];
   const files = fs.readdirSync(SESSIONS_DIR).filter((f) => f.endsWith(".json"));
 
@@ -70,6 +90,7 @@ export function listSessions(projectId: string): SessionSummary[] {
       const raw = fs.readFileSync(path.join(SESSIONS_DIR, file), "utf-8");
       const record = JSON.parse(raw) as SessionRecord;
       if (record.projectId !== projectId) continue;
+      if (ownerOf(record) !== userId) continue;
       const { turns, ...rest } = record;
       summaries.push({ ...rest, preview: previewFrom(turns) });
     } catch {

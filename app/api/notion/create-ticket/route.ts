@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/auth";
 import { getNotionAccounts } from "@/lib/registry";
+import { getSessionOwner } from "@/lib/sessions";
 import { getStorageDriver } from "@/lib/storage";
 import { createNotionPage, type NotionFileAttachment, type NotionTicket } from "@/lib/notion";
 import type { AttachmentMeta } from "@/lib/types";
@@ -12,6 +14,9 @@ type CreateTicketBody = {
 };
 
 export async function POST(req: NextRequest) {
+  const user = await getCurrentUser();
+  if (!user) return NextResponse.json({ error: "Belum login" }, { status: 401 });
+
   const body = (await req.json()) as CreateTicketBody;
   const { notionAccountId, ticket, sessionId, attachments } = body;
 
@@ -22,7 +27,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "sessionId wajib diisi kalau ada attachments" }, { status: 400 });
   }
 
-  const account = getNotionAccounts().find((n) => n.id === notionAccountId);
+  if (sessionId && getSessionOwner(sessionId) !== user.id) {
+    return NextResponse.json({ error: "Session tidak ditemukan" }, { status: 404 });
+  }
+
+  // Scoped lookup: an account belonging to another user is simply not found,
+  // so its token can never be reached by guessing the id.
+  const account = getNotionAccounts(user.id).find((n) => n.id === notionAccountId);
   if (!account) {
     return NextResponse.json({ error: "Akun Notion tidak ditemukan di registry" }, { status: 404 });
   }

@@ -763,17 +763,21 @@ export default function Home() {
                 <SelectValue placeholder={t.composer.projectPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                {config?.projects.map((p) => (
-                  <SelectItem
-                    key={p.id}
-                    value={p.id}
-                    disabled={!p.valid}
-                    title={p.valid ? undefined : `${t.composer.incompleteProject(p.missing.join(", "))}`}
-                  >
-                    {p.label}
-                    {p.valid ? "" : ` ${t.composer.incompleteLabel}`}
-                  </SelectItem>
-                ))}
+                {config?.projects.length ? (
+                  config.projects.map((p) => (
+                    <SelectItem
+                      key={p.id}
+                      value={p.id}
+                      disabled={!p.valid}
+                      title={p.valid ? undefined : `${t.composer.incompleteProject(p.missing.join(", "))}`}
+                    >
+                      {p.label}
+                      {p.valid ? "" : ` ${t.composer.incompleteLabel}`}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">{t.composer.noProjectsFound}</div>
+                )}
               </SelectContent>
             </Select>
 
@@ -786,11 +790,15 @@ export default function Home() {
                 <SelectValue placeholder={t.composer.notionPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                {config?.notionAccounts.map((n) => (
-                  <SelectItem key={n.id} value={n.id} disabled={!n.available}>
-                    {n.label} {n.available ? "" : t.composer.emptyLabel}
-                  </SelectItem>
-                ))}
+                {config?.notionAccounts.length ? (
+                  config.notionAccounts.map((n) => (
+                    <SelectItem key={n.id} value={n.id} disabled={!n.available}>
+                      {n.label} {n.available ? "" : t.composer.emptyLabel}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">{t.composer.noNotionFound}</div>
+                )}
               </SelectContent>
             </Select>
 
@@ -803,11 +811,15 @@ export default function Home() {
                 <SelectValue placeholder={scanLoading ? t.composer.agentLoading : t.composer.agentPlaceholder} />
               </SelectTrigger>
               <SelectContent>
-                {scan?.agents.map((a) => (
-                  <SelectItem key={a.name} value={a.name} title={a.description}>
-                    {a.name}
-                  </SelectItem>
-                ))}
+                {scan?.agents.length ? (
+                  scan.agents.map((a) => (
+                    <SelectItem key={a.name} value={a.name} title={a.description}>
+                      {a.name}
+                    </SelectItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-1.5 text-sm text-muted-foreground">{t.composer.noAgentsFound}</div>
+                )}
               </SelectContent>
             </Select>
 

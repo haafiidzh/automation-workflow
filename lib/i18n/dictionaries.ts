@@ -36,6 +36,9 @@ type Dictionary = {
     send: string;
     incompleteLabel: string;
     emptyLabel: string;
+    noProjectsFound: string;
+    noNotionFound: string;
+    noAgentsFound: string;
     attachTitle: string;
     attachTooBig: (maxMb: number) => string;
     attachUnsupported: string;
@@ -205,6 +208,9 @@ const id: Dictionary = {
     send: "Kirim",
     incompleteLabel: "(tidak lengkap)",
     emptyLabel: "(kosong)",
+    noProjectsFound: "Project tidak ditemukan",
+    noNotionFound: "Akun Notion tidak ditemukan",
+    noAgentsFound: "Agent tidak ditemukan",
     attachTitle: "Lampirkan gambar, PDF, atau Excel (maks 10MB)",
     attachTooBig: (maxMb) => `File melebihi batas ${maxMb}MB`,
     attachUnsupported: "Tipe file tidak didukung (hanya gambar, PDF, Excel .xlsx)",
@@ -564,6 +570,9 @@ const en: Dictionary = {
     send: "Send",
     incompleteLabel: "(incomplete)",
     emptyLabel: "(empty)",
+    noProjectsFound: "No project found",
+    noNotionFound: "No Notion account found",
+    noAgentsFound: "No agent found",
     attachTitle: "Attach an image, PDF, or Excel file (max 10MB)",
     attachTooBig: (maxMb) => `File exceeds the ${maxMb}MB limit`,
     attachUnsupported: "Unsupported file type (only images, PDF, Excel .xlsx)",

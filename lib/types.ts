@@ -18,11 +18,27 @@ export type NotionAccount = {
   env: string;
   workspace: string;
   available: boolean;
+  /** Owning user id, or "" for an account shared by everyone. */
+  user: string;
+};
+
+/**
+ * A project as the local agent reports it. When a local agent is paired this
+ * replaces `workflow/projects.md` entirely — the list of projects is a property
+ * of the user's machine, not of the server.
+ */
+export type LocalProject = {
+  id: string;
+  label: string;
+  path: string;
+  mode: "ro" | "rw";
 };
 
 export type ConfigResponse = {
   projects: Project[];
   notionAccounts: NotionAccount[];
+  /** True when `projects` is empty because the browser must scan instead. */
+  needsClientScan: boolean;
 };
 
 export type AgentInfo = {
@@ -62,6 +78,8 @@ export type SessionTurn = {
 
 export type SessionRecord = {
   sessionId: string;
+  /** Owner. Absent on records written before the auth layer existed. */
+  userId?: string;
   projectId: string;
   agentName: string;
   notionAccountId: string;

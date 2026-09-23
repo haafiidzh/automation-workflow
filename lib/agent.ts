@@ -1,10 +1,11 @@
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import type { SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { readRulesContent } from "./claude-dir";
+import { nodeFsSource } from "./claude-dir";
+import { readRulesContentFrom } from "./project-scan";
 import { queryNotionDatabase } from "./notion";
 import { parseExcelToText } from "./excel-parse";
-import { callLocalFs } from "./local-fs-bridge";
+import { bridgeFsSource, callLocalFs } from "./local-fs-bridge";
 import type { AttachmentMeta, ResolvedDisturbance } from "./types";
 
 export type AgentEvent =
@@ -36,6 +37,15 @@ type RunSessionParams = {
    * which would only ever see the server's own disk.
    */
   localFsBridgeId?: string;
+  /** Already-read `.claude/rules/`, so the caller's scan is not repeated. */
+  rules?: string;
+  /**
+   * The agent definition, read from wherever the project lives. Required
+   * alongside a bridge: loading it from disk would fail on a server that does
+   * not hold the project, and its own `tools:` list would re-enable the
+   * server-side filesystem tools.
+   */
+  agentDefinition?: { description: string; prompt: string };
 };
 
 const IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
@@ -118,10 +128,10 @@ async function buildPrompt(
 
 function buildSystemPromptAppend(
   docsFiles: string[],
+  rules: string,
   projectPath: string,
   localFsEnabled = false
 ): string {
-  const rules = readRulesContent(projectPath);
   const docsListing =
     docsFiles.length > 0
       ? `## File tersedia di .claude/docs/\n\n${docsFiles
@@ -226,6 +236,10 @@ asli sesuai NOTION_TASK_SCHEMA.md.`;
   const localFs = localFsEnabled
     ? `## Akses file lokal user
 
+Root folder project ini di mesin user: \`${projectPath}\`
+Selalu pakai path absolut yang diawali root itu. Working directory proses ini
+BUKAN folder project — mengabaikan ini membuat semua akses file ditolak 403.
+
 File di mesin user TIDAK bisa dibaca dengan tool Read/Glob/Grep bawaan —
 tool itu tidak tersedia di sesi ini. Pakai tool berikut, yang jalan lewat
 local agent di mesin user:
@@ -233,11 +247,20 @@ local agent di mesin user:
 - \`mcp__local_fs__read_file\` — baca satu file (butuh path absolut).
 - \`mcp__local_fs__glob\` — cari file dengan pola glob di dalam satu folder.
 - \`mcp__local_fs__grep\` — cari baris yang cocok regex di dalam satu folder.
+- \`mcp__local_fs__write_file\` — tulis/timpa satu file utuh.
+- \`mcp__local_fs__edit_file\` — ganti satu potongan teks di dalam file.
+- \`mcp__local_fs__make_dir\` — buat folder beserta induknya.
 
 Folder yang boleh diakses dibatasi allow-list di local agent user. Kalau tool
 balas error "outside the allow-listed folders" atau "not connected", sampaikan
 ke user untuk menambahkan folder / menyambungkan local agent — jangan menebak
-isi file.`
+isi file.
+
+Izin tulis terpisah dari izin baca dan per folder. Folder yang belum ditandai
+\`rw\` akan menolak tulis dengan pesan "is read-only"; sampaikan ke user untuk
+menjalankan \`orchestrator-agent allow-write <folder>\`, jangan mencoba jalur
+lain. \`edit_file\` gagal kalau \`old_string\` tidak ada atau muncul lebih dari
+sekali — perbaiki dengan menambah konteks, bukan dengan menimpa seluruh file.`
     : "";
 
   return [rules, docsListing, notionContract, localFs]
@@ -260,8 +283,24 @@ export async function* runAgentSession({
   attachments,
   disturbances,
   localFsBridgeId,
+  rules: providedRules,
+  agentDefinition,
 }: RunSessionParams): AsyncGenerator<AgentEvent> {
-  const append = buildSystemPromptAppend(docsFiles, projectPath, Boolean(localFsBridgeId));
+  // Rules come from wherever the project lives: the user's machine when a
+  // bridge is open, this server's disk otherwise. The caller usually has them
+  // already, from the same scan that validated the project.
+  const rules =
+    providedRules ??
+    (await readRulesContentFrom(
+      localFsBridgeId ? bridgeFsSource(localFsBridgeId) : nodeFsSource(),
+      projectPath
+    ));
+  const append = buildSystemPromptAppend(
+    docsFiles,
+    rules,
+    projectPath,
+    Boolean(localFsBridgeId)
+  );
   const disturbancePrefix = disturbances?.length ? buildDisturbancePrefix(disturbances) : "";
   const prompt = await buildPrompt(message, attachments, disturbancePrefix);
 
@@ -273,6 +312,13 @@ export async function* runAgentSession({
 
   if (localFsBridgeId) {
     const bridgeId = localFsBridgeId;
+
+    // A failed tool call is reported back to the model, never thrown: the
+    // session must survive a refused write so the agent can correct itself.
+    const errorResult = (message: string) => ({
+      content: [{ type: "text" as const, text: `Error: ${message}` }],
+      isError: true,
+    });
 
     const asToolResult = (result: Awaited<ReturnType<typeof callLocalFs>>) => ({
       content: [
@@ -322,15 +368,76 @@ export async function* runAgentSession({
         )
     );
 
+    const writeFileTool = tool(
+      "write_file",
+      "Write a text file on the user's local machine, creating it or replacing it entirely. Only works in folders the user marked writable (allow-write); a read-only folder answers 403.",
+      {
+        path: z.string().describe("Absolute path of the file on the user's machine"),
+        content: z.string().describe("Full new contents of the file"),
+      },
+      async (args) =>
+        asToolResult(
+          await callLocalFs(bridgeId, "write", { path: args.path, content: args.content })
+        )
+    );
+
+    const makeDirTool = tool(
+      "make_dir",
+      "Create a folder (including missing parents) on the user's local machine, inside a writable folder.",
+      {
+        path: z.string().describe("Absolute path of the folder to create"),
+      },
+      async (args) => asToolResult(await callLocalFs(bridgeId, "mkdir", { path: args.path }))
+    );
+
+    /**
+     * Read, replace, write — done here rather than in the local agent, which
+     * stays a dumb filesystem primitive. The file can change between the read
+     * and the write; for a single user editing their own machine that race is
+     * accepted, and it is why the match must be unique.
+     */
+    const editFileTool = tool(
+      "edit_file",
+      "Replace one exact string in a file on the user's local machine. Fails when old_string is missing or appears more than once, so include enough surrounding context to make it unique.",
+      {
+        path: z.string().describe("Absolute path of the file on the user's machine"),
+        old_string: z.string().describe("Exact text to replace, unique within the file"),
+        new_string: z.string().describe("Replacement text"),
+      },
+      async (args) => {
+        const current = await callLocalFs(bridgeId, "read", { path: args.path });
+        if (!current.ok) return asToolResult(current);
+        const content = ((current.data as { content?: string })?.content ?? "");
+        const occurrences = content.split(args.old_string).length - 1;
+        if (occurrences === 0) {
+          return errorResult(`old_string tidak ditemukan di ${args.path}`);
+        }
+        if (occurrences > 1) {
+          return errorResult(
+            `old_string muncul ${occurrences} kali di ${args.path}; tambahkan konteks supaya unik`
+          );
+        }
+        return asToolResult(
+          await callLocalFs(bridgeId, "write", {
+            path: args.path,
+            content: content.replace(args.old_string, args.new_string),
+          })
+        );
+      }
+    );
+
     mcpServers.local_fs = createSdkMcpServer({
       name: "local_fs",
       version: "1.0.0",
-      tools: [readFileTool, globTool, grepTool],
+      tools: [readFileTool, globTool, grepTool, writeFileTool, makeDirTool, editFileTool],
     });
     allowedTools.push(
       "mcp__local_fs__read_file",
       "mcp__local_fs__glob",
-      "mcp__local_fs__grep"
+      "mcp__local_fs__grep",
+      "mcp__local_fs__write_file",
+      "mcp__local_fs__make_dir",
+      "mcp__local_fs__edit_file"
     );
   }
 
@@ -364,12 +471,30 @@ export async function* runAgentSession({
     allowedTools.push("mcp__notion__query_database");
   }
 
+  // With a bridge, nothing about the project is on this machine: the agent
+  // definition is supplied inline, project settings are not read from disk, and
+  // cwd stays on the server so the SDK has a directory that actually exists.
+  // The inline definition's `tools` is the allow-list — an agent loaded from
+  // disk would bring its own, typically Read/Glob/Grep, and read this disk.
+  const bridged = Boolean(localFsBridgeId && agentDefinition);
+
   const q = query({
     prompt,
     options: {
-      cwd: projectPath,
+      cwd: bridged ? process.cwd() : projectPath,
+      ...(bridged
+        ? {
+            agents: {
+              [agentName]: {
+                description: agentDefinition!.description,
+                prompt: agentDefinition!.prompt,
+                tools: allowedTools,
+              },
+            },
+            settingSources: [],
+          }
+        : { settingSources: ["project"] as const }),
       agent: agentName,
-      settingSources: ["project"],
       systemPrompt: { type: "preset", preset: "claude_code", append },
       allowedTools,
       mcpServers,

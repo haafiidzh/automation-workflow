@@ -1,5 +1,15 @@
 # Notion Accounts
 
-| id | label | env | workspace |
-|---|---|---|---|
-| personal | Personal | NOTION_TOKEN_PERSONAL | My Workspace |
+| id | label | env | workspace | user |
+|---|---|---|---|---|
+| personal | Personal | NOTION_TOKEN_PERSONAL | My Workspace | u_hafidz |
+
+Kolom `env` = **nama** env var di server, bukan isinya. Token tidak pernah
+ditulis di file ini dan tidak pernah ditampilkan di UI.
+
+Kolom `user` = id user di `workflow/users.json` yang memiliki akun ini.
+Kosongkan kolom itu kalau akun dipakai bersama semua user.
+
+Sebelum dipakai, database target harus di-share ke integration Notion-nya
+(menu `⋯` → Connections). Kalau langkah itu terlewat, Notion membalas `404`
+saat ticket dibuat — bukan `403`. Langkah lengkapnya ada di `docs/setup.md`.
